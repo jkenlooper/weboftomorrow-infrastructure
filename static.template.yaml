@@ -483,49 +483,49 @@ Resources:
               RunOrder: 1
 
         # TODO: Add cleanup stage
-        -
-          Name: Cleanup
-          Actions:
-            -
-              ActionTypeId:
-                Category: Invoke
-                Owner: AWS
-                Provider: Lambda
-                Version: "1"
-              InputArtifacts:
-                - Name: sourceZip
-                - Name: staticZip
-              Configuration:
-                FunctionName: !Ref CleanupLambda
-                UserParameters: "anything here?"
-              RunOrder: 1
+        #-
+        #  Name: Cleanup
+        #  Actions:
+        #    -
+        #      ActionTypeId:
+        #        Category: Invoke
+        #        Owner: AWS
+        #        Provider: Lambda
+        #        Version: "1"
+        #      InputArtifacts:
+        #        - Name: sourceZip
+        #        - Name: staticZip
+        #      Configuration:
+        #        FunctionName: !Ref CleanupLambda
+        #        UserParameters: "anything here?"
+        #      RunOrder: 1
         #   Any files in the sourceZip root should have invalidations.
         # - Delete unused versions (any version that is not blue or green) in StaticSiteFiles production object path.
         # - Delete StaticSiteFiles stage object path
         # - Copy 'error.html' from GreenVersion to StaticSiteFiles
         #   path "${ProjectSlug}/error.html".
 
-  CleanupLambda::
-    Type: "AWS::Lambda::Function"
-    Properties:
-      Description: |
-        Clean up lambda used in static pipeline. Will delete old objects in S3
-        bucket that are no longer needed. S3 objects that will be removed are
-        staging/* files, any older versions that are not the current blue or
-        green version.
+  #CleanupLambda:
+  #  Type: "AWS::Lambda::Function"
+  #  Properties:
+  #    Description: |
+  #      Clean up lambda used in static pipeline. Will delete old objects in S3
+  #      bucket that are no longer needed. S3 objects that will be removed are
+  #      staging/* files, any older versions that are not the current blue or
+  #      green version.
 
-        Will also update the error.html to the most recent green version.
-      Environment:
-        Variables:
-          STATIC_SITE_FILES: !Ref StaticSiteFiles
-          BLUE_VERSION: !Ref BlueVersion
-          GREEN_VERSION: !Ref GreenVersion
-      Handler: ""
-      Code:
-        # example
-        # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-lambda-function-code.html
-        ZipFile: |
-          import boto3
+  #      Will also update the error.html to the most recent green version.
+  #    Environment:
+  #      Variables:
+  #        STATIC_SITE_FILES: !Ref StaticSiteFiles
+  #        BLUE_VERSION: !Ref BlueVersion
+  #        GREEN_VERSION: !Ref GreenVersion
+  #    Handler: ""
+  #    Code:
+  #      # example
+  #      # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-lambda-function-code.html
+  #      ZipFile: |
+  #        import boto3
 
 
   StaticBuildServiceRole:

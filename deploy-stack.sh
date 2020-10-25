@@ -28,19 +28,19 @@ aws cloudformation create-change-set \
   --capabilities CAPABILITY_NAMED_IAM \
   --parameters file://parameters.json \
   --template-url "https://${ARTIFACT_BUCKET}.s3-${REGION}.amazonaws.com/${STACK_NAME}/static.template.package.yml" \
-  --output json \
-  | jq -r '.Id' \
+  --output text \
+  --query 'Id' \
 )
-echo $CHANGE_SET
 
 sleep 2s;
 while [ $( \
 aws cloudformation describe-change-set \
   --change-set-name "${CHANGE_SET}" \
   --stack-name $STACK_NAME \
-  --output json \
-  | jq -r '.Status' \
+  --output text \
+  --query 'Status' \
 ) = 'CREATE_IN_PROGRESS' ]; do
+  echo "create in progress...retrying in 5 seconds.";
   sleep 5s;
 done;
 aws cloudformation describe-change-set \
