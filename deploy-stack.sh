@@ -2,15 +2,25 @@
 
 set -o errexit -o pipefail
 
+set -v
+
 ARTIFACT_BUCKET=build-artifacts-jkenlooper
 STACK_NAME=weboftomorrow
 REGION=us-west-2
+TIMESTAMP=$(date "+%s")
+# only a-z A-Z 0-9
+CHANGE_SET_NAME=a
 
 cfn-lint static.template.yaml
 
+(
+rm -rf package;
+cd cleanup;
+pip install --target ../package/python -r requirements.txt
+)
+
 aws s3 ls "s3://${ARTIFACT_BUCKET}" ||
   aws s3 mb "s3://${ARTIFACT_BUCKET}";
-
 
 aws cloudformation package \
   --template-file static.template.yaml \
@@ -23,7 +33,7 @@ aws s3 cp static.template.package.yml "s3://${ARTIFACT_BUCKET}/${STACK_NAME}/"
 
 CHANGE_SET=$( \
 aws cloudformation create-change-set \
-  --change-set-name weboftomorrow-test-1 \
+  --change-set-name $CHANGE_SET_NAME \
   --stack-name $STACK_NAME \
   --capabilities CAPABILITY_NAMED_IAM \
   --parameters file://parameters.json \
