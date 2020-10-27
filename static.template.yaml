@@ -89,7 +89,7 @@ Parameters:
 
   PatternToTriggerBuild:
     Type: String
-    Default: "^refs/heads/release/.+$"
+    Default: "^refs/heads/release"
     Description: |
       Set the git branch or tags pattern that will trigger a build.
 
@@ -135,6 +135,15 @@ Resources:
             Condition:
               StringLike:
                 "aws:referer": !Ref SecretHeaderString
+          -
+            Effect: "Allow"
+            Principal: !GetAtt CleanupLambda.Arn
+            Resource:
+              - !Join ['', [!GetAtt StaticSiteFiles.Arn, !Sub "/${ProjectSlug}/stage"]]
+              - !Join ['', [!GetAtt StaticSiteFiles.Arn, !Sub "/${ProjectSlug}/stage/*"]]
+            Action:
+              - "s3:DeleteObject"
+              - "s3:ListBucket"
 
   BuildArtifacts:
     Type: 'AWS::S3::Bucket'
@@ -143,8 +152,8 @@ Resources:
       LifecycleConfiguration:
         Rules:
           -
-            ExpirationInDays: 1
-            NoncurrentVersionExpirationInDays: 2
+            ExpirationInDays: 31
+            NoncurrentVersionExpirationInDays: 20
             Status: Enabled
             Prefix: !Ref ProjectSlug
       PublicAccessBlockConfiguration:
@@ -484,40 +493,39 @@ Resources:
               RunOrder: 1
 
         # TODO: Add cleanup stage
-        #-
-        #  Name: Cleanup
-        #  Actions:
-        #    -
-        #      ActionTypeId:
-        #        Category: Invoke
-        #        Owner: AWS
-        #        Provider: Lambda
-        #        Version: "1"
-        #      InputArtifacts:
-        #        - Name: sourceZip
-        #        - Name: staticZip
-        #      Configuration:
-        #        FunctionName: !Ref CleanupLambda
-        #        UserParameters: "anything here?"
-        #      RunOrder: 1
-        #   Any files in the sourceZip root should have invalidations.
-        # - Delete unused versions (any version that is not blue or green) in StaticSiteFiles production object path.
-        # - Delete StaticSiteFiles stage object path
-        # - Copy 'error.html' from GreenVersion to StaticSiteFiles
-        #   path "${ProjectSlug}/error.html".
+        -
+          Name: Cleanup
+          Actions:
+            -
+              Name: "Cleanup-Lambda"
+              ActionTypeId:
+                Category: Invoke
+                Owner: AWS
+                Provider: Lambda
+                Version: "1"
+              InputArtifacts:
+                - Name: sourceZip
+                - Name: staticZip
+              Configuration:
+                FunctionName: !Ref CleanupLambda
+                UserParameters: !Sub |
+                  {
+                    "StaticSiteFiles": "${StaticSiteFiles}",
+                    "BlueVersion": "${BlueVersion}",
+                    "GreenVersion": "${GreenVersion}"
+                  }
+              RunOrder: 1
 
   CleanupLambda:
     Type: "AWS::Serverless::Function"
     Properties:
-      Description: |
-        Clean up lambda used in static pipeline. Will delete old objects in S3
-        bucket that are no longer needed. S3 objects that will be removed are
-        staging/* files, any older versions that are not the current blue or
-        green version.
+      Description: >
+        Delete old objects in S3 bucket that are no longer needed.
 
         Will also update the error.html to the most recent green version.
       Environment:
         Variables:
+          # Not currently being used; see UserParameters
           STATIC_SITE_FILES: !Ref StaticSiteFiles
           BLUE_VERSION: !Ref BlueVersion
           GREEN_VERSION: !Ref GreenVersion
@@ -527,9 +535,30 @@ Resources:
       Policies:
         - AWSLambdaBasicExecutionRole
         - AWSLambdaReadOnlyAccess
-        - !Sub "${ProjectSlug}-CleanupLambdaPolicy"
+        -
+          Statement:
+            -
+              Action:
+                - "logs:*"
+              Effect: "Allow"
+              Resource: "arn:aws:logs:*:*:*"
+            -
+              Action:
+                - "codepipeline:PutJobSuccessResult"
+                - "codepipeline:PutJobFailureResult"
+              Effect: "Allow"
+              Resource: "*"
+            -
+              Action:
+                - "s3:DeleteObject"
+                - "s3:ListBucket"
+              Effect: "Allow"
+              Resource:
+                - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/stage"
+                - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/stage/*"
       Layers:
         - !Ref CleanupLambdaLibs
+      Timeout: 5
 
   CleanupLambdaLibs:
     Type: "AWS::Serverless::LayerVersion"
@@ -541,27 +570,6 @@ Resources:
       CompatibleRuntimes:
         - python3.8
 
-  CleanupLambdaPolicy:
-    Type: "AWS::IAM::Policy"
-    Properties:
-      PolicyName: !Sub "${ProjectSlug}-CleanupLambdaPolicy"
-      Roles:
-        - !Ref CleanupLambdaRole
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          -
-            Action:
-              - "logs:*"
-            Effect: "Allow"
-            Resource: "arn:aws:logs:*:*:*"
-          -
-            Action:
-              - "codepipeline:PutJobSuccessResult"
-              - "codepipeline:PutJobFailureResult"
-            Effect: "Allow"
-            Resource: "*"
-          #TODO: add s3 permissions
 
   StaticBuildServiceRole:
     Type: 'AWS::IAM::Role'

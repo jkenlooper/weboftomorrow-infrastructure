@@ -5,15 +5,19 @@
   },
   {
     "ParameterKey": "BlueVersion",
-    "ParameterValue": "0.8.2"
+    "ParameterValue": "0.8.1"
   },
   {
     "ParameterKey": "GreenVersion",
-    "ParameterValue": "0.8.2-rc-1"
+    "ParameterValue": "0.8.2"
   },
   {
     "ParameterKey": "GitHubCloneURL",
     "ParameterValue": "https://github.com/jkenlooper/www.weboftomorrow.com-personal.git"
+  },
+  {
+    "ParameterKey": "PatternToTriggerBuild",
+    "ParameterValue": "^refs/heads/release"
   },
   {
     "ParameterKey": "SecretHeaderString",

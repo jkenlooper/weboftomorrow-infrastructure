@@ -1,0 +1,14 @@
+/bin/
+/cleanup/bin/
+/cleanup/lib/
+/cleanup/lib64
+/cleanup/pyvenv.cfg
+/cleanup/share/
+/lib/
+/lib64
+/package/
+/pyvenv.cfg
+/share/
+
+/static.template.package.yml
+

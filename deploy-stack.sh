@@ -9,7 +9,11 @@ STACK_NAME=weboftomorrow
 REGION=us-west-2
 TIMESTAMP=$(date "+%s")
 # only a-z A-Z 0-9
-CHANGE_SET_NAME=a
+BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' parameters.json)
+GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' parameters.json)
+
+CHANGE_SET_NAME=$(echo "version-bump-${BLUE_VERSION}-to-${GREEN_VERSION}" | tr --squeeze-repeats [:punct:] '-')
+echo "Creating Change Set: ${CHANGE_SET_NAME}"
 
 cfn-lint static.template.yaml
 
@@ -30,6 +34,8 @@ aws cloudformation package \
   --output-template-file static.template.package.yml;
 
 aws s3 cp static.template.package.yml "s3://${ARTIFACT_BUCKET}/${STACK_NAME}/"
+
+#TODO aws cloudformation set-stack-policy
 
 CHANGE_SET=$( \
 aws cloudformation create-change-set \
