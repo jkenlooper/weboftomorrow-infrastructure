@@ -2,8 +2,6 @@
 
 set -o errexit -o pipefail
 
-set -v
-
 ARTIFACT_BUCKET=build-artifacts-jkenlooper
 STACK_NAME=weboftomorrow
 REGION=us-west-2
@@ -20,6 +18,7 @@ cfn-lint static.template.yaml
 (
 rm -rf package;
 cd cleanup;
+git clean -dX -f;
 pip install --target ../package/python -r requirements.txt
 )
 
@@ -34,6 +33,14 @@ aws cloudformation package \
   --output-template-file static.template.package.yml;
 
 aws s3 cp static.template.package.yml "s3://${ARTIFACT_BUCKET}/${STACK_NAME}/"
+
+#aws cloudformation create-stack \
+#  --stack-name $STACK_NAME \
+#  --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
+#  --parameters file://parameters.json \
+#  --template-url "https://${ARTIFACT_BUCKET}.s3-${REGION}.amazonaws.com/${STACK_NAME}/static.template.package.yml"
+#
+#exit 0
 
 #TODO aws cloudformation set-stack-policy
 

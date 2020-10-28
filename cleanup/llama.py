@@ -3,17 +3,12 @@ import json
 import logging
 import boto3
 
+# TODO:
 #   Any files in the sourceZip root should have invalidations.
 # - Copy 'error.html' from GreenVersion to StaticSiteFiles path "${ProjectSlug}/error.html".
 
 logger = logging.getLogger()
 logger.setLevel(os.environ.get("LOGGING_LEVEL", logging.DEBUG))
-
-#s3 = boto3.client('s3')
-#s3.get_object(
-#    Bucket=
-#)
-
 
 codepipeline = boto3.client('codepipeline')
 

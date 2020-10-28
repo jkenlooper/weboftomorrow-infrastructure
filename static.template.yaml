@@ -131,19 +131,37 @@ Resources:
             Action: "s3:GetObject"
             Effect: "Allow"
             Principal: "*"
-            Resource: !Join ['', [!GetAtt StaticSiteFiles.Arn, !Sub "/${ProjectSlug}/*"]]
+            #TODO: use OAI
+            #Principal:
+            #  CanonicalUser: !Ref canonical user id assigned to OAI
+            Resource:
+              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/stage"
+              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/stage/*"
+              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/production"
+              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/production/*"
             Condition:
               StringLike:
                 "aws:referer": !Ref SecretHeaderString
           -
-            Effect: "Allow"
-            Principal: !GetAtt CleanupLambda.Arn
-            Resource:
-              - !Join ['', [!GetAtt StaticSiteFiles.Arn, !Sub "/${ProjectSlug}/stage"]]
-              - !Join ['', [!GetAtt StaticSiteFiles.Arn, !Sub "/${ProjectSlug}/stage/*"]]
             Action:
+              - "s3:GetObject"
               - "s3:DeleteObject"
+              #- "s3:ListBucket"
+            Effect: "Allow"
+            Principal:
+              #AWS: !Sub "arn:aws:sts::${AWS::AccountId}:assumed-role/CleanupLambdaRole"
+              AWS: !GetAtt CleanupLambdaRole.Arn
+            Resource:
+              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/stage"
+              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/stage/*"
+          -
+            Action:
               - "s3:ListBucket"
+            Effect: "Allow"
+            Principal:
+              AWS: !GetAtt CleanupLambdaRole.Arn
+            Resource:
+              - !Sub "${StaticSiteFiles.Arn}"
 
   BuildArtifacts:
     Type: 'AWS::S3::Bucket'
@@ -532,43 +550,65 @@ Resources:
       Handler: "llama.handler"
       Runtime: python3.8
       CodeUri: cleanup/.
-      Policies:
-        - AWSLambdaBasicExecutionRole
-        - AWSLambdaReadOnlyAccess
-        -
-          Statement:
-            -
-              Action:
-                - "logs:*"
-              Effect: "Allow"
-              Resource: "arn:aws:logs:*:*:*"
-            -
-              Action:
-                - "codepipeline:PutJobSuccessResult"
-                - "codepipeline:PutJobFailureResult"
-              Effect: "Allow"
-              Resource: "*"
-            -
-              Action:
-                - "s3:DeleteObject"
-                - "s3:ListBucket"
-              Effect: "Allow"
-              Resource:
-                - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/stage"
-                - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/stage/*"
-      Layers:
-        - !Ref CleanupLambdaLibs
+      Role: !GetAtt CleanupLambdaRole.Arn
+      #Layers:
+      #  - !Ref CleanupLambdaLibs
       Timeout: 5
 
-  CleanupLambdaLibs:
-    Type: "AWS::Serverless::LayerVersion"
+  CleanupLambdaRole:
+    Type: "AWS::IAM::Role"
     Properties:
-      LayerName: CleanupPythonLayer
-      Description: |
-        Dependencies for the CleanupLambda
-      ContentUri: package/.
-      CompatibleRuntimes:
-        - python3.8
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service: "lambda.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      RoleName: !Sub "${ProjectSlug}-CleanupLambdaRole"
+
+  CleanupLambdaPolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: !Sub "${ProjectSlug}-CleanupLambdaPolicy"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Action:
+              - "logs:*"
+            Effect: "Allow"
+            Resource: "arn:aws:logs:*:*:*"
+          -
+            Action:
+              - "codepipeline:PutJobSuccessResult"
+              - "codepipeline:PutJobFailureResult"
+            Effect: "Allow"
+            Resource: "*"
+          -
+            Action:
+              - "s3:DeleteObject"
+              - "s3:ListBucket"
+            Effect: "Allow"
+            Resource:
+              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/stage"
+              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/stage/*"
+      Roles:
+        - !Ref CleanupLambdaRole
+
+
+  #CleanupLambdaLibs:
+  #  Type: "AWS::Serverless::LayerVersion"
+  #  Properties:
+  #    LayerName: CleanupPythonLayer
+  #    Description: |
+  #      Dependencies for the CleanupLambda
+  #    ContentUri: package/.
+  #    CompatibleRuntimes:
+  #      - python3.8
 
 
   StaticBuildServiceRole:
