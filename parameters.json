@@ -16,6 +16,10 @@
     "ParameterValue": "https://github.com/jkenlooper/www.weboftomorrow.com-personal.git"
   },
   {
+    "ParameterKey": "GitBranchToBuildFrom",
+    "ParameterValue": "release"
+  },
+  {
     "ParameterKey": "PatternToTriggerBuild",
     "ParameterValue": "^refs/heads/release"
   },

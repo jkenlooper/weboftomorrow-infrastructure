@@ -22,12 +22,13 @@ Metadata:
         Parameters:
           - StaticSiteFilesBucketName
           - BuildArtifactBucketName
+          - GitBranchToBuildFrom
           - PatternToTriggerBuild
 
 Parameters:
   ProjectSlug:
     Type: String
-    Description: |
+    Description: >
       A one word name of the project. Will be used for root object name in
       buckets and other places. The Parameter Store in AWS Systems Manager will
       use this as the prefix (like /weboftomorrow/) for parameters.
@@ -37,23 +38,23 @@ Parameters:
     MaxLength: 50
   BlueVersion:
     Type: String
-    Description: |
+    Description: >
       A version number for the existing production site that will be replaced.
     Default: "0.8.1"
   GreenVersion:
     Type: String
-    Description: |
+    Description: >
       A version number for the new production site that will be deployed.
     Default: "0.8.2"
   GitHubCloneURL:
     Type: String
-    Description: |
+    Description: >
       The https clone URL for the project.
     Default: ""
 
   SecretHeaderString:
     Type: String
-    Description: |
+    Description: >
       Secret string in the Referer header that CloudFront will use when
       accessing files from the S3 bucket. This blocks direct public access of
       the static sites bucket unless the Referer header with this string is
@@ -67,7 +68,7 @@ Parameters:
 
   StaticSiteFilesBucketName:
     Type: String
-    Description: |
+    Description: >
       Set to an existing name of a static site files bucket name. It will create
       a new one if this is blank. This bucket will be configured for static
       website hosting. Files are placed in a root directory named as the
@@ -75,22 +76,28 @@ Parameters:
     Default: ""
   BuildArtifactBucketName:
     Type: String
-    Description: |
+    Description: >
       Set to an existing name of a build artifact bucket name. It will create
       a new one if this is blank. The build artifacts are placed in a root
       directory named as the ProjectSlug and expire after a day.
     Default: ""
   ManualVerificationEmail:
     Type: String
-    Description: |
+    Description: >
       Email address to send a notification to when the staging site needs to be
       manually verified.
     Default: ""
 
+  GitBranchToBuildFrom:
+    Type: String
+    Default: "release"
+    Description: >
+      This is the branch that will be checked out when building the static.zip.
+      It is also used when running the code build integration spec.
   PatternToTriggerBuild:
     Type: String
     Default: "^refs/heads/release"
-    Description: |
+    Description: >
       Set the git branch or tags pattern that will trigger a build.
 
 Conditions:
@@ -120,6 +127,14 @@ Resources:
         #      KeyPrefixEquals: !Sub "${ProjectSlug}/this/object/no-longer-exists.jpg"
         #    RedirectRule:
         #      ReplaceKeyWith: !Sub "${ProjectSlug}/${GreenVersion}/this/object/is-now-here.jpg"
+      LifecycleConfiguration:
+        Rules:
+          -
+            Id: drop-stage-files
+            ExpirationInDays: 7
+            Prefix: !Sub "${ProjectSlug}/stage"
+            Status: Enabled
+
   StaticSiteFilesPolicy:
     Type: 'AWS::S3::BucketPolicy'
     Properties:
@@ -149,7 +164,6 @@ Resources:
               #- "s3:ListBucket"
             Effect: "Allow"
             Principal:
-              #AWS: !Sub "arn:aws:sts::${AWS::AccountId}:assumed-role/CleanupLambdaRole"
               AWS: !GetAtt CleanupLambdaRole.Arn
             Resource:
               - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/stage"
@@ -194,7 +208,7 @@ Resources:
             Effect: "Allow"
             Principal:
               Service: 'codepipeline.amazonaws.com'
-            Resource: !Join ['', [!GetAtt BuildArtifacts.Arn, !Sub "/${ProjectSlug}/static.zip"]]
+            Resource: !Sub "${BuildArtifacts.Arn}/${ProjectSlug}/static.zip"
 
   StaticDeployRole:
     Type: 'AWS::IAM::Role'
@@ -695,6 +709,11 @@ Resources:
         Image: "aws/codebuild/standard:4.0"
         ImagePullCredentialsType: CODEBUILD
         Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          -
+            Name: GIT_BRANCH
+            Type: PLAINTEXT
+            Value: !Ref GitBranchToBuildFrom
       QueuedTimeoutInMinutes: 10
       ServiceRole: !Ref StaticBuildServiceRole
       Source:
@@ -733,6 +752,10 @@ Resources:
             Name: STAGING_URL
             Type: PLAINTEXT
             Value: !Sub "http://${CloudFrontStaging.DomainName}"
+          -
+            Name: GIT_BRANCH
+            Type: PLAINTEXT
+            Value: !Ref GitBranchToBuildFrom
       Artifacts:
         Type: CODEPIPELINE
       Source:
@@ -751,6 +774,8 @@ Resources:
     Type: 'AWS::CloudFront::Distribution'
     Properties:
       DistributionConfig:
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
         DefaultCacheBehavior:
           Compress: true
           TargetOriginId: "blue-green-failover"
@@ -781,7 +806,9 @@ Resources:
           -
             Id: "blue"
             CustomOriginConfig:
-              OriginProtocolPolicy: match-viewer
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
             DomainName: !Select [1, !Split ["://", !GetAtt StaticSiteFiles.WebsiteURL]]
             OriginCustomHeaders:
               -
@@ -792,7 +819,9 @@ Resources:
           -
             Id: "green"
             CustomOriginConfig:
-              OriginProtocolPolicy: match-viewer
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
             DomainName: !Select [1, !Split ["://", !GetAtt StaticSiteFiles.WebsiteURL]]
             OriginCustomHeaders:
               -
@@ -830,6 +859,8 @@ Resources:
     Type: 'AWS::CloudFront::Distribution'
     Properties:
       DistributionConfig:
+        # TODO:
+        #ViewerCertificate:
         DefaultCacheBehavior:
           Compress: true
           TargetOriginId: "blue-green-failover"
@@ -860,7 +891,9 @@ Resources:
           -
             Id: "blue"
             CustomOriginConfig:
-              OriginProtocolPolicy: match-viewer
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
             DomainName: !Select [1, !Split ["://", !GetAtt StaticSiteFiles.WebsiteURL]]
             OriginCustomHeaders:
               -
@@ -871,7 +904,9 @@ Resources:
           -
             Id: "green"
             CustomOriginConfig:
-              OriginProtocolPolicy: match-viewer
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
             DomainName: !Select [1, !Split ["://", !GetAtt StaticSiteFiles.WebsiteURL]]
             OriginCustomHeaders:
               -
