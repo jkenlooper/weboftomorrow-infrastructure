@@ -166,8 +166,17 @@ Resources:
             Principal:
               AWS: !GetAtt CleanupLambdaRole.Arn
             Resource:
-              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/stage"
-              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/stage/*"
+              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/production"
+              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/production/*"
+          -
+            Action:
+              - "s3:DeleteObject"
+            Effect: "Deny"
+            Principal:
+              AWS: !GetAtt CleanupLambdaRole.Arn
+            Resource:
+              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/production/${BlueVersion}/*"
+              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/production/${GreenVersion}/*"
           -
             Action:
               - "s3:ListBucket"

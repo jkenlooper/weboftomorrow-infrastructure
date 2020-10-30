@@ -38,6 +38,24 @@ def put_job_failure(job_id, message):
             'type': 'JobFailed'
         })
 
+def list_objects_at_prefix(bucket_name, prefix, continuation_token=None, object_list=[]):
+    s3 = boto3.client('s3')
+
+    args = {
+        "Bucket": bucket_name,
+        "Prefix": prefix
+    }
+    if continuation_token:
+        args["ContinuationToken"] = continuation_token
+
+    list_objects_response = s3.list_objects_v2(**args)
+    if list_objects_response.get('KeyCount', 0) == 0:
+        return object_list
+
+    objects = list(map(lambda x: x['Key'], list_objects_response['Contents']))
+    if list_objects_response.get('IsTruncated'):
+        objects = objects + list_objects_at_prefix(bucket_name, prefix, continuation_token=list_objects_response.NextContinuationToken, object_list=objects)
+    return objects
 
 def delete_files(bucket_name, prefix, continuation_token=None):
     "List and delete objects from s3. Limited to 1000 objects at a time."
@@ -72,6 +90,9 @@ def delete_files(bucket_name, prefix, continuation_token=None):
         logger.info("More than 1000 objects to delete. Deleting next chunk.")
         delete_files(bucket_name, prefix, continuation_token=list_objects_response.NextContinuationToken)
 
+def find_prefix_not_in_set(common_path, keep_set, keys):
+    "Given a list of s3 object keys return the prefix that is not in the keep_set."
+    return list(set(map(lambda x: x[len(common_path):].split('/', maxsplit=1)[0], keys)).difference(keep_set))
 
 def handler(event, context):
     #"https://docs.aws.amazon.com/codepipeline/latest/userguide/actions-invoke-lambda-function.html"
@@ -84,7 +105,12 @@ def handler(event, context):
 
         user_params = get_user_params(job_data)
         logger.debug(f"user parameters: {user_params}")
-        delete_files(user_params["StaticSiteFiles"], 'weboftomorrow/stage/')
+
+        keys = list_objects_at_prefix(user_params["StaticSiteFiles"], 'weboftomorrow/production/')
+        prefix_to_delete = find_prefix_not_in_set('weboftomorrow/production/', set([user_params.get('BlueVersion'), user_params.get('GreenVersion')]), keys)
+        for old_prefix in prefix_to_delete:
+            delete_files(user_params["StaticSiteFiles"], 'weboftomorrow/production/' + old_prefix)
+
         put_job_success(job_id, "Complete")
     except Exception as e:
         put_job_failure(job_id, f"Function failed due to exception. {e}")
