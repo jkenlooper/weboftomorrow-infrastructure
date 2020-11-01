@@ -1,4 +1,4 @@
-AWSTemplateFormatVersion: 2010-09-09
+AWSTemplateFormatVersion: "2010-09-09"
 Transform: "AWS::Serverless-2016-10-31"
 
 Metadata:
@@ -435,6 +435,7 @@ Resources:
                 Version: "1"
               Configuration:
                 S3Bucket: !Ref BuildArtifacts
+                # static.zip here is the GreenVersion
                 S3ObjectKey: !Sub "${ProjectSlug}/static.zip"
                 PollForSourceChanges: true
               Name: "StaticBuild-artifact"

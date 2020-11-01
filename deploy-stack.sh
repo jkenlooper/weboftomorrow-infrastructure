@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
-set -o errexit -o pipefail
+set -o errexit -o pipefail -o nounset
 
-ARTIFACT_BUCKET=build-artifacts-jkenlooper
-STACK_NAME=weboftomorrow
-REGION=us-west-2
+ARTIFACT_BUCKET=$1
+STACK_NAME=$2
+REGION=$3
 TIMESTAMP=$(date "+%s")
 # only a-z A-Z 0-9
 BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' parameters.json)
@@ -29,7 +29,6 @@ aws cloudformation package \
   --template-file static.template.yaml \
   --s3-bucket $ARTIFACT_BUCKET \
   --s3-prefix $STACK_NAME \
-  --force-upload \
   --output-template-file static.template.package.yml;
 
 aws s3 cp static.template.package.yml "s3://${ARTIFACT_BUCKET}/${STACK_NAME}/"
