@@ -1,7 +1,12 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Transform: "AWS::Serverless-2016-10-31"
+
+Description: >
+  A static site backed by CloudFront CDN. Uses a blue-green deployment via two
+  origins in an origin group. The origins can be swapped when needing to revert
+  a blue-green deployment.
 
 Metadata:
+  Author: Jake Hickenlooper
   "AWS::Cloudformation::Interface":
     ParameterGroups:
       -
@@ -13,17 +18,12 @@ Metadata:
         Label: Project Settings
         Parameters:
           - ProjectSlug
-          - GitHubCloneURL
-          - ManualVerificationEmail
           - SecretHeaderString
           - HostedZoneId
       -
         Label: Optional Settings
         Parameters:
           - StaticSiteFilesBucketName
-          - BuildArtifactBucketName
-          - GitBranchToBuildFrom
-          - PatternToTriggerBuild
 
 Parameters:
   ProjectSlug:
@@ -46,11 +46,6 @@ Parameters:
     Description: >
       A version number for the new production site that will be deployed.
     Default: "0.8.2"
-  GitHubCloneURL:
-    Type: String
-    Description: >
-      The https clone URL for the project.
-    Default: ""
 
   SecretHeaderString:
     Type: String
@@ -74,39 +69,18 @@ Parameters:
       website hosting. Files are placed in a root directory named as the
       ProjectSlug.
     Default: ""
-  BuildArtifactBucketName:
-    Type: String
-    Description: >
-      Set to an existing name of a build artifact bucket name. It will create
-      a new one if this is blank. The build artifacts are placed in a root
-      directory named as the ProjectSlug and expire after a day.
-    Default: ""
-  ManualVerificationEmail:
-    Type: String
-    Description: >
-      Email address to send a notification to when the staging site needs to be
-      manually verified.
-    Default: ""
 
-  GitBranchToBuildFrom:
+  CleanupLambdaRoleArn:
     Type: String
-    Default: "release"
-    Description: >
-      This is the branch that will be checked out when building the static.zip.
-      It is also used when running the code build integration spec.
-  PatternToTriggerBuild:
-    Type: String
-    Default: "^refs/heads/release"
-    Description: >
-      Set the git branch or tags pattern that will trigger a build.
+    Description: "Arn"
+    AllowedPattern: "arn:aws:iam::[^:]+:role/.+"
+    Default: "arn:aws:iam::691611515789:role/weboftomorrow-CleanupLambdaRole"
 
 Conditions:
   CreateStaticSiteBucket: !Not [!Equals [!Ref StaticSiteFilesBucketName, ""]]
-  CreateBuildArtifactsBucket: !Not [!Equals [!Ref BuildArtifactBucketName, ""]]
+
 Resources:
-  # Create a bucket and policy to allow the cloudfront distribution to use it as
-  # an origin.  Direct public access to the bucket is blocked by a simple
-  # Referer header with a secret string.
+
   StaticSiteFiles:
     Type: 'AWS::S3::Bucket'
     Properties:
@@ -161,7 +135,7 @@ Resources:
               #- "s3:ListBucket"
             Effect: "Allow"
             Principal:
-              AWS: !GetAtt CleanupLambdaRole.Arn
+              AWS: CleanupLambdaRoleArn
             Resource:
               - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/production"
               - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/production/*"
@@ -170,7 +144,7 @@ Resources:
               - "s3:DeleteObject"
             Effect: "Deny"
             Principal:
-              AWS: !GetAtt CleanupLambdaRole.Arn
+              AWS: CleanupLambdaRoleArn
             Resource:
               - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/production/${BlueVersion}/*"
               - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/production/${GreenVersion}/*"
@@ -179,607 +153,17 @@ Resources:
               - "s3:ListBucket"
             Effect: "Allow"
             Principal:
-              AWS: !GetAtt CleanupLambdaRole.Arn
+              AWS: CleanupLambdaRoleArn
             Resource:
               - !Sub "${StaticSiteFiles.Arn}"
 
-  BuildArtifacts:
-    Type: 'AWS::S3::Bucket'
-    Properties:
-      BucketName: !If [CreateBuildArtifactsBucket, !Ref BuildArtifactBucketName, !Ref "AWS::NoValue"]
-      LifecycleConfiguration:
-        Rules:
-          -
-            ExpirationInDays: 31
-            NoncurrentVersionExpirationInDays: 20
-            Status: Enabled
-            Prefix: !Ref ProjectSlug
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      VersioningConfiguration:
-        Status: Enabled
-
-  BuildArtifactsPolicy:
-    Type: 'AWS::S3::BucketPolicy'
-    Properties:
-      Bucket: !Ref BuildArtifacts
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          -
-            Action: "s3:GetObject"
-            Effect: "Allow"
-            Principal:
-              Service: 'codepipeline.amazonaws.com'
-            Resource: !Sub "${BuildArtifacts.Arn}/${ProjectSlug}/static.zip"
-
-  StaticDeployRole:
-    Type: 'AWS::IAM::Role'
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          -
-            Effect: "Allow"
-            Principal:
-              Service: 'codepipeline.amazonaws.com'
-            Action:
-              - "sts:AssumeRole"
-      Path: "/"
-      RoleName: !Sub "${ProjectSlug}-StaticDeploy"
-
-  StaticDeployPolicy:
-    Type: "AWS::IAM::Policy"
-    Properties:
-      PolicyName: !Sub "${ProjectSlug}-pipeline-StaticDeploy"
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          -
-            Effect: "Allow"
-            Resource:
-              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ProjectSlug}-StaticPipeline"
-              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ProjectSlug}-StaticPipeline:*"
-              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codepipeline/${StaticPipeline}"
-              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codepipeline/${StaticPipeline}:*"
-            Action:
-              - "logs:CreateLogGroup"
-              - "logs:CreateLogStream"
-              - "logs:PutLogEvents"
-          -
-            Effect: "Allow"
-            Action:
-              - "s3:GetObject"
-              - "s3:GetObjectVersion"
-              - "s3:GetBucketAcl"
-              - "s3:GetBucketLocation"
-            Resource:
-              - !Sub "${BuildArtifacts.Arn}/${ProjectSlug}"
-              - !Sub "${BuildArtifacts.Arn}/${ProjectSlug}/*"
-          -
-            Effect: "Allow"
-            Action:
-              - "s3:PutObject"
-              - "s3:GetObjectVersion"
-              - "s3:GetBucketAcl"
-              - "s3:GetBucketLocation"
-            Resource:
-              - !GetAtt StaticSiteFiles.Arn
-              - !Sub "${StaticSiteFiles.Arn}/*"
-          -
-            Action:
-              - "iam:PassRole"
-            Resource: "*"
-            Effect: "Allow"
-            Condition:
-              StringEqualsIfExists:
-                  "iam:PassedToService":
-                    - "cloudformation.amazonaws.com"
-                    - "elasticbeanstalk.amazonaws.com"
-                    - "ec2.amazonaws.com"
-                    - "ecs-tasks.amazonaws.com"
-          -
-            Action:
-              - "codecommit:CancelUploadArchive"
-              - "codecommit:GetBranch"
-              - "codecommit:GetCommit"
-              - "codecommit:GetUploadArchiveStatus"
-              - "codecommit:UploadArchive"
-            Resource: "*"
-            Effect: "Allow"
-          -
-            Action:
-              - "codedeploy:CreateDeployment"
-              - "codedeploy:GetApplication"
-              - "codedeploy:GetApplicationRevision"
-              - "codedeploy:GetDeployment"
-              - "codedeploy:GetDeploymentConfig"
-              - "codedeploy:RegisterApplicationRevision"
-            Resource: "*"
-            Effect: "Allow"
-          -
-            Action:
-              - "codestar-connections:UseConnection"
-            Resource: "*"
-            Effect: "Allow"
-          -
-            Action:
-              - "elasticbeanstalk:*"
-              - "ec2:*"
-              - "elasticloadbalancing:*"
-              - "autoscaling:*"
-              - "cloudwatch:*"
-              - "s3:*"
-              - "sns:*"
-              - "cloudformation:*"
-              - "rds:*"
-              - "sqs:*"
-              - "ecs:*"
-            Resource: "*"
-            Effect: "Allow"
-          -
-            Action:
-              - "lambda:InvokeFunction"
-              - "lambda:ListFunctions"
-            Resource: "*"
-            Effect: "Allow"
-          -
-            Action:
-              - "opsworks:CreateDeployment"
-              - "opsworks:DescribeApps"
-              - "opsworks:DescribeCommands"
-              - "opsworks:DescribeDeployments"
-              - "opsworks:DescribeInstances"
-              - "opsworks:DescribeStacks"
-              - "opsworks:UpdateApp"
-              - "opsworks:UpdateStack"
-            Resource: "*"
-            Effect: "Allow"
-          -
-            Action:
-              - "cloudformation:CreateStack"
-              - "cloudformation:DeleteStack"
-              - "cloudformation:DescribeStacks"
-              - "cloudformation:UpdateStack"
-              - "cloudformation:CreateChangeSet"
-              - "cloudformation:DeleteChangeSet"
-              - "cloudformation:DescribeChangeSet"
-              - "cloudformation:ExecuteChangeSet"
-              - "cloudformation:SetStackPolicy"
-              - "cloudformation:ValidateTemplate"
-            Resource: "*"
-            Effect: "Allow"
-          -
-            Action:
-              - "codebuild:BatchGetBuilds"
-              - "codebuild:StartBuild"
-              - "codebuild:BatchGetBuildBatches"
-              - "codebuild:StartBuildBatch"
-            Resource: "*"
-            Effect: "Allow"
-          -
-            Effect: "Allow"
-            Action:
-              - "devicefarm:ListProjects"
-              - "devicefarm:ListDevicePools"
-              - "devicefarm:GetRun"
-              - "devicefarm:GetUpload"
-              - "devicefarm:CreateUpload"
-              - "devicefarm:ScheduleRun"
-            Resource: "*"
-          -
-            Effect: "Allow"
-            Action:
-              - "servicecatalog:ListProvisioningArtifacts"
-              - "servicecatalog:CreateProvisioningArtifact"
-              - "servicecatalog:DescribeProvisioningArtifact"
-              - "servicecatalog:DeleteProvisioningArtifact"
-              - "servicecatalog:UpdateProduct"
-            Resource: "*"
-          -
-            Effect: "Allow"
-            Action:
-              - "cloudformation:ValidateTemplate"
-            Resource: "*"
-          -
-            Effect: "Allow"
-            Action:
-              - "ecr:DescribeImages"
-            Resource: "*"
-          -
-            Effect: "Allow"
-            Action:
-              - "states:DescribeExecution"
-              - "states:DescribeStateMachine"
-              - "states:StartExecution"
-            Resource: "*"
-          -
-            Effect: "Allow"
-            Action:
-              - "appconfig:StartDeployment"
-              - "appconfig:StopDeployment"
-              - "appconfig:GetDeployment"
-            Resource: "*"
-      Roles:
-        - !Ref StaticDeployRole
-
-  ManualVerificationTopic:
-    Type: AWS::SNS::Topic
-    Properties:
-      DisplayName: !Sub "${ProjectSlug}-ManualVerificationTopic"
-      Subscription:
-        -
-          Protocol: email
-          Endpoint: !Ref ManualVerificationEmail
-
-  StaticPipeline:
-    Type: AWS::CodePipeline::Pipeline
-    Properties:
-      ArtifactStore:
-        Type: S3
-        Location: !Ref BuildArtifacts
-      Name: !Sub "${ProjectSlug}-StaticSite"
-      RoleArn: !GetAtt StaticDeployRole.Arn
-      Stages:
-        -
-          Name: Source
-          Actions:
-            -
-              ActionTypeId:
-                Category: Source
-                Owner: AWS
-                Provider: S3
-                Version: "1"
-              Configuration:
-                S3Bucket: !Ref BuildArtifacts
-                # static.zip here is the GreenVersion
-                S3ObjectKey: !Sub "${ProjectSlug}/static.zip"
-                PollForSourceChanges: true
-              Name: "StaticBuild-artifact"
-              OutputArtifacts:
-                - Name: staticZip
-              RunOrder: 1
-            -
-              ActionTypeId:
-                Category: Source
-                Owner: AWS
-                Provider: S3
-                Version: "1"
-              Configuration:
-                S3Bucket: !Ref BuildArtifacts
-                S3ObjectKey: !Sub "${ProjectSlug}/source.zip"
-                PollForSourceChanges: false
-              Name: "StaticBuild-artifact-source"
-              OutputArtifacts:
-                - Name: sourceZip
-              RunOrder: 2
-        -
-          Name: Stage
-          Actions:
-            -
-              ActionTypeId:
-                Category: Deploy
-                Owner: AWS
-                Provider: S3
-                Version: "1"
-              Configuration:
-                BucketName: !Ref StaticSiteFiles
-                ObjectKey: !Sub "${ProjectSlug}/stage"
-                Extract: true
-              Name: "StaticBuild-stage"
-              InputArtifacts:
-                - Name: staticZip
-              RunOrder: 1
-
-            #TODO: Invoke a lambda to set custom headers
-            # index.html Cache-Control: max-age=0, s-max-age=300
-            #
-            # media/* and root/* Cache-Control: max-age=0, s-max-age=604800
-            #   Deployment will invalidate /media/* path and each file in root/
-            #   (/robots.txt, humans.txt, favicon.ico)
-            #   Browser clients must revalidate each time
-            #
-            # theme/* Cache-Control: public, max-age=604800, immutable
-            #   Any files in theme have version as part of the path (/theme/0.0.1/*) and
-            #   are immutable.
-
-            -
-              ActionTypeId:
-                Category: Test
-                Owner: AWS
-                Provider: CodeBuild
-                Version: "1"
-              Configuration:
-                ProjectName: !Ref StaticTest
-              Name: "StaticTest-stage"
-              InputArtifacts:
-                - Name: sourceZip
-              RunOrder: 2
-            -
-              ActionTypeId:
-                Category: Approval
-                Owner: AWS
-                Provider: Manual
-                Version: "1"
-              Configuration:
-                CustomData: |
-                  Review the staging website before pushing change to
-                  production.
-                ExternalEntityLink: !Sub "http://${CloudFrontStaging.DomainName}"
-                NotificationArn: !Ref ManualVerificationTopic
-              Name: "approval-stage"
-              RunOrder: 3
-
-        -
-          Name: Deploy
-          Actions:
-            -
-              ActionTypeId:
-                Category: Deploy
-                Owner: AWS
-                Provider: S3
-                Version: "1"
-              Configuration:
-                BucketName: !Ref StaticSiteFiles
-                ObjectKey: !Sub "${ProjectSlug}/production"
-                Extract: true
-              Name: "StaticBuild-deploy"
-              InputArtifacts:
-                - Name: staticZip
-              RunOrder: 1
-
-        -
-          Name: Cleanup
-          Actions:
-            -
-              Name: "Cleanup-Lambda"
-              ActionTypeId:
-                Category: Invoke
-                Owner: AWS
-                Provider: Lambda
-                Version: "1"
-              InputArtifacts:
-                - Name: sourceZip
-                - Name: staticZip
-              Configuration:
-                FunctionName: !Ref CleanupLambda
-                UserParameters: !Sub |
-                  {
-                    "StaticSiteFiles": "${StaticSiteFiles}",
-                    "BlueVersion": "${BlueVersion}",
-                    "GreenVersion": "${GreenVersion}"
-                  }
-              RunOrder: 1
-
-  CleanupLambda:
-    Type: "AWS::Serverless::Function"
-    Properties:
-      Description: >
-        Delete old objects in S3 bucket that are no longer needed.
-
-        Will also update the error.html to the most recent green version.
-      Environment:
-        Variables:
-          # Not currently being used; see UserParameters
-          STATIC_SITE_FILES: !Ref StaticSiteFiles
-          BLUE_VERSION: !Ref BlueVersion
-          GREEN_VERSION: !Ref GreenVersion
-      Handler: "llama.handler"
-      Runtime: python3.8
-      CodeUri: cleanup/.
-      Role: !GetAtt CleanupLambdaRole.Arn
-      #Layers:
-      #  - !Ref CleanupLambdaLibs
-      Timeout: 5
-
-  CleanupLambdaRole:
-    Type: "AWS::IAM::Role"
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          -
-            Effect: "Allow"
-            Principal:
-              Service: "lambda.amazonaws.com"
-            Action:
-              - "sts:AssumeRole"
-      Path: "/"
-      RoleName: !Sub "${ProjectSlug}-CleanupLambdaRole"
-
-  CleanupLambdaPolicy:
-    Type: "AWS::IAM::Policy"
-    Properties:
-      PolicyName: !Sub "${ProjectSlug}-CleanupLambdaPolicy"
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          -
-            Action:
-              - "logs:*"
-            Effect: "Allow"
-            Resource: "arn:aws:logs:*:*:*"
-          -
-            Action:
-              - "codepipeline:PutJobSuccessResult"
-              - "codepipeline:PutJobFailureResult"
-            Effect: "Allow"
-            Resource: "*"
-          -
-            Action:
-              - "s3:DeleteObject"
-              - "s3:ListBucket"
-            Effect: "Allow"
-            Resource:
-              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/stage"
-              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/stage/*"
-      Roles:
-        - !Ref CleanupLambdaRole
-
-
-  #CleanupLambdaLibs:
-  #  Type: "AWS::Serverless::LayerVersion"
-  #  Properties:
-  #    LayerName: CleanupPythonLayer
-  #    Description: |
-  #      Dependencies for the CleanupLambda
-  #    ContentUri: package/.
-  #    CompatibleRuntimes:
-  #      - python3.8
-
-
-  StaticBuildServiceRole:
-    Type: 'AWS::IAM::Role'
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          -
-            Effect: "Allow"
-            Principal:
-              Service: 'codebuild.amazonaws.com'
-            Action:
-              - "sts:AssumeRole"
-      Path: "/"
-      RoleName: !Sub "${ProjectSlug}-StaticBuild"
-
-  StaticBuildPolicy:
-    Type: "AWS::IAM::Policy"
-    Properties:
-      PolicyName: !Sub "${ProjectSlug}-codebuild-StaticBuild"
-      Roles:
-        - !Ref StaticBuildServiceRole
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          -
-            Effect: "Allow"
-            Resource:
-              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ProjectSlug}-StaticBuild"
-              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ProjectSlug}-StaticBuild:*"
-              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${StaticBuild}"
-              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${StaticBuild}:*"
-              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ProjectSlug}-StaticTest"
-              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ProjectSlug}-StaticTest:*"
-              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${StaticTest}"
-              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${StaticTest}:*"
-            Action:
-              - "logs:CreateLogGroup"
-              - "logs:CreateLogStream"
-              - "logs:PutLogEvents"
-          -
-            Effect: "Allow"
-            Resource:
-              - !Sub "${BuildArtifacts.Arn}/${ProjectSlug}"
-              - !Sub "${BuildArtifacts.Arn}/${ProjectSlug}*"
-            Action:
-              - "s3:GetObject"
-              - "s3:PutObject"
-              - "s3:GetObjectVersion"
-              - "s3:GetBucketAcl"
-              - "s3:GetBucketLocation"
-          -
-            Effect: "Allow"
-            Resource:
-              - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:report-group:${ProjectSlug}-StaticBuild-*"
-            Action:
-              - "codebuild:CreateReportGroup"
-              - "codebuild:CreateReport"
-              - "codebuild:UpdateReport"
-              - "codebuild:BatchPutTestCases"
-              - "codebuild:BatchPutCodeCoverages"
-          -
-            Effect: "Allow"
-            Resource:
-              - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectSlug}/*"
-            Action:
-              - "ssm:GetParameters"
-
-  StaticBuild:
-    Type: 'AWS::CodeBuild::Project'
-    Properties:
-      Name: !Sub "${ProjectSlug}-StaticBuild"
-      Artifacts:
-        Type: S3
-        Location: !Ref BuildArtifacts
-        Name: !Ref ProjectSlug
-      LogsConfig:
-        CloudWatchLogs:
-          GroupName: !Sub "${ProjectSlug}-StaticBuild"
-          Status: ENABLED
-      Environment:
-        ComputeType: BUILD_GENERAL1_SMALL
-        Image: "aws/codebuild/standard:4.0"
-        ImagePullCredentialsType: CODEBUILD
-        Type: LINUX_CONTAINER
-        EnvironmentVariables:
-          -
-            Name: GIT_BRANCH
-            Type: PLAINTEXT
-            Value: !Ref GitBranchToBuildFrom
-      QueuedTimeoutInMinutes: 10
-      ServiceRole: !Ref StaticBuildServiceRole
-      Source:
-        Auth:
-          Type: OAUTH
-        # GitCloneDepth set to 0 to support git submodule checkout
-        GitCloneDepth: 0
-        Location: !Ref GitHubCloneURL
-        Type: GITHUB
-      TimeoutInMinutes: 10
-      Triggers:
-        Webhook: true
-        FilterGroups:
-          -
-            -
-              Type: EVENT
-              Pattern: PUSH
-              ExcludeMatchedPattern: false
-            -
-              ExcludeMatchedPattern: false
-              Pattern: !Ref PatternToTriggerBuild
-              Type: HEAD_REF
-
-  StaticTest:
-    Type: 'AWS::CodeBuild::Project'
-    Properties:
-      Name: !Sub "${ProjectSlug}-StaticTest"
-      ServiceRole: !Ref StaticBuildServiceRole
-      Environment:
-        ComputeType: BUILD_GENERAL1_SMALL
-        Image: "aws/codebuild/standard:4.0"
-        ImagePullCredentialsType: CODEBUILD
-        Type: LINUX_CONTAINER
-        EnvironmentVariables:
-          -
-            Name: STAGING_URL
-            Type: PLAINTEXT
-            Value: !Sub "http://${CloudFrontStaging.DomainName}"
-          -
-            Name: GIT_BRANCH
-            Type: PLAINTEXT
-            Value: !Ref GitBranchToBuildFrom
-      Artifacts:
-        Type: CODEPIPELINE
-      Source:
-        Type: CODEPIPELINE
-        BuildSpec: buildspec-integration.yml
-      TimeoutInMinutes: 10
-      QueuedTimeoutInMinutes: 10
-      LogsConfig:
-        CloudWatchLogs:
-          GroupName: !Sub "${ProjectSlug}-StaticTest"
-          Status: ENABLED
-
-  # CloudFront distribution with an origin group. The origins in the origin
-  # group are swapped when doing blue-green deployments.
   CloudFrontStaging:
     Type: 'AWS::CloudFront::Distribution'
     Properties:
       DistributionConfig:
+        Comment: >
+          Staging distribution with no caching set. Origins in the origin group
+          can be swapped when testing a revert of a blue-green deployment.
         DefaultCacheBehavior:
           Compress: true
           TargetOriginId: "blue-green-failover"
@@ -818,7 +202,6 @@ Resources:
                 HeaderName: Referer
                 HeaderValue: !Ref SecretHeaderString
             OriginPath: !Sub "/${ProjectSlug}/stage/${BlueVersion}"
-
           -
             Id: "green"
             CustomOriginConfig:
@@ -835,6 +218,9 @@ Resources:
     Type: 'AWS::CloudFront::Distribution'
     Properties:
       DistributionConfig:
+        Comment: >
+          The origins in the origin group can be swapped when reverting the
+          blue-green deployment.
         DefaultCacheBehavior:
           Compress: true
           TargetOriginId: "blue-green-failover"
@@ -873,7 +259,6 @@ Resources:
                 HeaderName: Referer
                 HeaderValue: !Ref SecretHeaderString
             OriginPath: !Sub "/${ProjectSlug}/production/${BlueVersion}"
-
           -
             Id: "green"
             CustomOriginConfig:
@@ -885,7 +270,7 @@ Resources:
                 HeaderName: Referer
                 HeaderValue: !Ref SecretHeaderString
             OriginPath: !Sub "/${ProjectSlug}/production/${GreenVersion}"
-
+        #
         # TODO: cleanup llama should invalidate caches OR max-age should be set
         # on index.html paths.
         #CacheBehaviors:
