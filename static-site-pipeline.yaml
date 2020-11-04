@@ -12,12 +12,12 @@ Metadata:
         Label: Project Settings
         Parameters:
           - ProjectSlug
+          - SecretHeaderString
           - GitHubCloneURL
           - ManualVerificationEmail
       -
         Label: Optional Settings
         Parameters:
-          - BuildArtifactBucketName
           - GitBranchToBuildFrom
           - PatternToTriggerBuild
 
@@ -32,29 +32,12 @@ Parameters:
     AllowedPattern: "[a-z0-9]+"
     MinLength: 3
     MaxLength: 50
-  #BlueVersion:
-  #  Type: String
-  #  Description: >
-  #    A version number for the existing production site that will be replaced.
-  #  Default: "0.8.1"
-  #GreenVersion:
-  #  Type: String
-  #  Description: >
-  #    A version number for the new production site that will be deployed.
-  #  Default: "0.8.2"
   GitHubCloneURL:
     Type: String
     Description: >
       The https clone URL for the project.
     Default: ""
 
-  BuildArtifactBucketName:
-    Type: String
-    Description: >
-      Set to an existing name of a build artifact bucket name. It will create
-      a new one if this is blank. The build artifacts are placed in a root
-      directory named as the ProjectSlug and expire after a day.
-    Default: ""
   ManualVerificationEmail:
     Type: String
     Description: >
@@ -74,14 +57,22 @@ Parameters:
     Description: >
       Set the git branch or tags pattern that will trigger a build.
 
-Conditions:
-  CreateBuildArtifactsBucket: !Not [!Equals [!Ref BuildArtifactBucketName, ""]]
+  SecretHeaderString:
+    Type: String
+    Description: >
+      Secret string in the Referer header that CloudFront will use when
+      accessing files from the S3 bucket. This blocks direct public access of
+      the static sites bucket unless the Referer header with this string is
+      used.
+    Default: "None shall pass."
+
 Resources:
 
   BuildArtifacts:
     Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
-      BucketName: !If [CreateBuildArtifactsBucket, !Ref BuildArtifactBucketName, !Ref "AWS::NoValue"]
       LifecycleConfiguration:
         Rules:
           -
@@ -99,6 +90,8 @@ Resources:
 
   BuildArtifactsPolicy:
     Type: 'AWS::S3::BucketPolicy'
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Bucket: !Ref BuildArtifacts
       PolicyDocument:
@@ -109,7 +102,17 @@ Resources:
             Effect: "Allow"
             Principal:
               Service: 'codepipeline.amazonaws.com'
-            Resource: !Sub "${BuildArtifacts.Arn}/${ProjectSlug}/static.zip"
+            Resource:
+              - !Sub "${BuildArtifacts.Arn}/${ProjectSlug}/*"
+          -
+            Action: "s3:GetObject"
+            Effect: "Allow"
+            Principal:
+              AWS:
+                Fn::ImportValue: !Sub "${ProjectSlug}-CleanupLambdaRoleArn"
+            Resource:
+              - !Sub "${BuildArtifacts.Arn}/${ProjectSlug}-Static/*"
+
 
   StaticBuildServiceRole:
     Type: 'AWS::IAM::Role'
@@ -305,8 +308,16 @@ Resources:
               - "s3:GetBucketAcl"
               - "s3:GetBucketLocation"
             Resource:
-              - !GetAtt StaticSiteFiles.Arn
-              - !Sub "${StaticSiteFiles.Arn}/*"
+              - !Sub
+                  - "arn:aws:s3:::${bucketName}"
+                  -
+                    bucketName:
+                      Fn::ImportValue: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
+              - !Sub
+                  - "arn:aws:s3:::${bucketName}/*"
+                  -
+                    bucketName:
+                      Fn::ImportValue: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
           -
             Action:
               - "iam:PassRole"
@@ -518,25 +529,14 @@ Resources:
                 Provider: S3
                 Version: "1"
               Configuration:
-                BucketName: !Ref StaticSiteFiles
+                BucketName:
+                  Fn::ImportValue: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
                 ObjectKey: !Sub "${ProjectSlug}/stage"
                 Extract: true
               Name: "StaticBuild-stage"
               InputArtifacts:
                 - Name: staticZip
               RunOrder: 1
-
-            #TODO: Invoke a lambda to set custom headers
-            # index.html Cache-Control: max-age=0, s-max-age=300
-            #
-            # media/* and root/* Cache-Control: max-age=0, s-max-age=604800
-            #   Deployment will invalidate /media/* path and each file in root/
-            #   (/robots.txt, humans.txt, favicon.ico)
-            #   Browser clients must revalidate each time
-            #
-            # theme/* Cache-Control: public, max-age=604800, immutable
-            #   Any files in theme have version as part of the path (/theme/0.0.1/*) and
-            #   are immutable.
 
             -
               ActionTypeId:
@@ -575,13 +575,26 @@ Resources:
                 Provider: S3
                 Version: "1"
               Configuration:
-                BucketName: !Ref StaticSiteFiles
+                BucketName:
+                  Fn::ImportValue: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
                 ObjectKey: !Sub "${ProjectSlug}/production"
                 Extract: true
               Name: "StaticBuild-deploy"
               InputArtifacts:
                 - Name: staticZip
               RunOrder: 1
+
+            #TODO: Invoke a lambda to set custom headers
+            # index.html Cache-Control: max-age=0, s-max-age=300
+            #
+            # media/* and root/* Cache-Control: max-age=0, s-max-age=604800
+            #   Deployment will invalidate /media/* path and each file in root/
+            #   (/robots.txt, humans.txt, favicon.ico)
+            #   Browser clients must revalidate each time
+            #
+            # theme/* Cache-Control: public, max-age=604800, immutable
+            #   Any files in theme have version as part of the path (/theme/0.0.1/*) and
+            #   are immutable.
 
         -
           Name: Cleanup
@@ -599,14 +612,48 @@ Resources:
                 - Name: parametersJSON
               Configuration:
                 FunctionName: !Ref CleanupLambda
-                #TODO: get blue and green versions from parametersJSON
-                #"BlueVersion": "${BlueVersion}",
-                #    "GreenVersion": "${GreenVersion}"
-                UserParameters: !Sub |
-                  {
-                    "StaticSiteFiles": "${StaticSiteFiles}"
-                  }
+                UserParameters: !Sub
+                  - |
+                    {
+                      "StaticSiteFiles": "${bucketName}"
+                    }
+                  -
+                    bucketName:
+                      Fn::ImportValue: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
               RunOrder: 1
+
+  CloudFrontStaging:
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        Comment: >
+          Staging distribution with no caching set. Uses the green version only.
+        DefaultCacheBehavior:
+          Compress: true
+          TargetOriginId: "green"
+          # Managed-CachingDisabled
+          CachePolicyId: "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
+          ViewerProtocolPolicy: redirect-to-https
+        DefaultRootObject: index.html
+        Enabled: true
+        PriceClass: PriceClass_100
+        Origins:
+          -
+            Id: "green"
+            CustomOriginConfig:
+              # The S3 static website is only accessible via http
+              OriginProtocolPolicy: http-only
+            DomainName: !Sub
+              - "${bucketName}.s3-website-${region}.amazonaws.com"
+              -
+                bucketName:
+                  Fn::ImportValue: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
+                region: !Ref "AWS::Region"
+            OriginCustomHeaders:
+              -
+                HeaderName: Referer
+                HeaderValue: !Ref SecretHeaderString
+            OriginPath: !Sub "/${ProjectSlug}/stage/green"
 
   CleanupLambda:
     Type: "AWS::Serverless::Function"
@@ -615,65 +662,16 @@ Resources:
         Delete old objects in S3 bucket that are no longer needed.
 
         Will also update the error.html to the most recent green version.
-      #Environment:
-      #  Variables:
-      #    # Not currently being used; see UserParameters
-      #    STATIC_SITE_FILES: !Ref StaticSiteFiles
-      #    BLUE_VERSION: !Ref BlueVersion
-      #    GREEN_VERSION: !Ref GreenVersion
       Handler: "llama.handler"
       Runtime: python3.8
       CodeUri: cleanup/.
-      Role: !GetAtt CleanupLambdaRole.Arn
+      Role:
+        Fn::ImportValue: !Sub "${ProjectSlug}-CleanupLambdaRoleArn"
+      #Role: Fn::GetAtt: [ !ImportValue "${ProjectSlug}-CleanupLambdaRole", "Arn" ]
+      #Role: !GetAtt CleanupLambdaRole.Arn
       #Layers:
       #  - !Ref CleanupLambdaLibs
       Timeout: 5
-
-  CleanupLambdaRole:
-    Type: "AWS::IAM::Role"
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          -
-            Effect: "Allow"
-            Principal:
-              Service: "lambda.amazonaws.com"
-            Action:
-              - "sts:AssumeRole"
-      Path: "/"
-      RoleName: !Sub "${ProjectSlug}-CleanupLambdaRole"
-
-  CleanupLambdaPolicy:
-    Type: "AWS::IAM::Policy"
-    Properties:
-      PolicyName: !Sub "${ProjectSlug}-CleanupLambdaPolicy"
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          -
-            Action:
-              - "logs:*"
-            Effect: "Allow"
-            Resource: "arn:aws:logs:*:*:*"
-          -
-            Action:
-              - "codepipeline:PutJobSuccessResult"
-              - "codepipeline:PutJobFailureResult"
-            Effect: "Allow"
-            Resource: "*"
-          #
-          #Bucket policy allows this?
-          #-
-          #  Action:
-          #    - "s3:DeleteObject"
-          #    - "s3:ListBucket"
-          #  Effect: "Allow"
-          #  Resource:
-          #    - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/stage"
-          #    - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/stage/*"
-      Roles:
-        - !Ref CleanupLambdaRole
 
 
   #CleanupLambdaLibs:
@@ -685,4 +683,3 @@ Resources:
   #    ContentUri: package/.
   #    CompatibleRuntimes:
   #      - python3.8
-

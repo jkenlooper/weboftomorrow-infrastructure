@@ -20,10 +20,6 @@ Metadata:
           - ProjectSlug
           - SecretHeaderString
           - HostedZoneId
-      -
-        Label: Optional Settings
-        Parameters:
-          - StaticSiteFilesBucketName
 
 Parameters:
   ProjectSlug:
@@ -61,30 +57,13 @@ Parameters:
     Description: An Amazon Route 53 hosted zone ID, such as Z23YXV4OVPL04A.
     AllowedPattern: ".+"
 
-  StaticSiteFilesBucketName:
-    Type: String
-    Description: >
-      Set to an existing name of a static site files bucket name. It will create
-      a new one if this is blank. This bucket will be configured for static
-      website hosting. Files are placed in a root directory named as the
-      ProjectSlug.
-    Default: ""
-
-  CleanupLambdaRoleArn:
-    Type: String
-    Description: "Arn"
-    AllowedPattern: "arn:aws:iam::[^:]+:role/.+"
-    Default: "arn:aws:iam::691611515789:role/weboftomorrow-CleanupLambdaRole"
-
-Conditions:
-  CreateStaticSiteBucket: !Not [!Equals [!Ref StaticSiteFilesBucketName, ""]]
-
 Resources:
 
   StaticSiteFiles:
     Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
-      BucketName: !If [CreateStaticSiteBucket, !Ref StaticSiteFilesBucketName, !Ref "AWS::NoValue"]
       PublicAccessBlockConfiguration:
         BlockPublicAcls: false
         BlockPublicPolicy: false
@@ -111,6 +90,8 @@ Resources:
 
   StaticSiteFilesPolicy:
     Type: 'AWS::S3::BucketPolicy'
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Bucket: !Ref StaticSiteFiles
       PolicyDocument:
@@ -130,92 +111,43 @@ Resources:
                 "aws:referer": !Ref SecretHeaderString
           -
             Action:
-              - "s3:GetObject"
-              - "s3:DeleteObject"
-              #- "s3:ListBucket"
-            Effect: "Allow"
-            Principal:
-              AWS: CleanupLambdaRoleArn
-            Resource:
-              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/production"
-              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/production/*"
-          -
-            Action:
               - "s3:DeleteObject"
             Effect: "Deny"
-            Principal:
-              AWS: CleanupLambdaRoleArn
+            Principal: "*"
             Resource:
               - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/production/${BlueVersion}/*"
               - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/production/${GreenVersion}/*"
           -
             Action:
+              - "s3:GetObject"
+              - "s3:DeleteObject"
+            Effect: "Allow"
+            Principal:
+              AWS:
+                Fn::ImportValue: !Sub "${ProjectSlug}-CleanupLambdaRoleArn"
+              #AWS: !ImportValue "${ProjectSlug}-CleanupLambdaRoleArn"
+              #AWS: Fn::GetAtt: [ !ImportValue "${ProjectSlug}-CleanupLambdaRole", "Arn" ]
+              #AWS: !Sub "arn:aws:iam::${AWS::AccountId}:role/weboftomorrow-CleanupLambdaRole"
+            Resource:
+              - !Sub "arn:aws:s3:::${StaticSiteFiles}/${ProjectSlug}/production"
+              - !Sub "arn:aws:s3:::${StaticSiteFiles}/${ProjectSlug}/production/*"
+          -
+            Action:
               - "s3:ListBucket"
             Effect: "Allow"
             Principal:
-              AWS: CleanupLambdaRoleArn
+              AWS:
+                Fn::ImportValue: !Sub "${ProjectSlug}-CleanupLambdaRoleArn"
+              #AWS: !ImportValue "${ProjectSlug}-CleanupLambdaRoleArn"
+              #AWS: Fn::GetAtt: [ !ImportValue "${ProjectSlug}-CleanupLambdaRole", "Arn" ]
+              #AWS: !Sub "arn:aws:iam::${AWS::AccountId}:role/weboftomorrow-CleanupLambdaRole"
             Resource:
-              - !Sub "${StaticSiteFiles.Arn}"
-
-  CloudFrontStaging:
-    Type: 'AWS::CloudFront::Distribution'
-    Properties:
-      DistributionConfig:
-        Comment: >
-          Staging distribution with no caching set. Origins in the origin group
-          can be swapped when testing a revert of a blue-green deployment.
-        DefaultCacheBehavior:
-          Compress: true
-          TargetOriginId: "blue-green-failover"
-          # Managed-CachingDisabled
-          CachePolicyId: "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
-          ViewerProtocolPolicy: redirect-to-https
-        DefaultRootObject: index.html
-        Enabled: true
-        PriceClass: PriceClass_100
-        OriginGroups:
-          Items:
-            -
-              Id: "blue-green-failover"
-              FailoverCriteria:
-                StatusCodes:
-                  Items:
-                    - 404
-                  Quantity: 1
-              Members:
-                Items:
-                  -
-                    OriginId: "green"
-                  -
-                    OriginId: "blue"
-                Quantity: 2
-          Quantity: 2
-        Origins:
-          -
-            Id: "blue"
-            CustomOriginConfig:
-              # The S3 static website is only accessible via http
-              OriginProtocolPolicy: http-only
-            DomainName: !Select [1, !Split ["://", !GetAtt StaticSiteFiles.WebsiteURL]]
-            OriginCustomHeaders:
-              -
-                HeaderName: Referer
-                HeaderValue: !Ref SecretHeaderString
-            OriginPath: !Sub "/${ProjectSlug}/stage/${BlueVersion}"
-          -
-            Id: "green"
-            CustomOriginConfig:
-              # The S3 static website is only accessible via http
-              OriginProtocolPolicy: http-only
-            DomainName: !Select [1, !Split ["://", !GetAtt StaticSiteFiles.WebsiteURL]]
-            OriginCustomHeaders:
-              -
-                HeaderName: Referer
-                HeaderValue: !Ref SecretHeaderString
-            OriginPath: !Sub "/${ProjectSlug}/stage/${GreenVersion}"
+              - !Sub "arn:aws:s3:::${StaticSiteFiles}"
 
   CloudFrontProduction:
     Type: 'AWS::CloudFront::Distribution'
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       DistributionConfig:
         Comment: >
@@ -301,6 +233,8 @@ Resources:
 
   StaticSiteDomainProduction:
     Type: AWS::Route53::RecordSet
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       HostedZoneId: !Ref HostedZoneId
       Name: www.weboftomorrow.com.
@@ -308,10 +242,12 @@ Resources:
       AliasTarget:
         # Z2FDTNDATAQYW2 is the hosted zone id of cloudfront domain name.
         HostedZoneId: Z2FDTNDATAQYW2
-        DNSName: !Sub "http://${CloudFrontStaging.DomainName}"
+        DNSName: !Sub "http://${CloudFrontProduction.DomainName}"
 
 Outputs:
   ProductionWebsiteURL:
     Value: !Ref StaticSiteDomainProduction
-  StagingWebsiteURL:
-    Value: !Sub "http://${CloudFrontStaging.DomainName}"
+  StaticSiteFilesBucketName:
+    Value: !Ref StaticSiteFiles
+    Export:
+      Name: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
