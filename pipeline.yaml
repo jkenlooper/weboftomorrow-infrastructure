@@ -1,0 +1,576 @@
+AWSTemplateFormatVersion: "2010-09-09"
+#Transform: "AWS::Serverless-2016-10-31"
+
+Description: >
+  Pipeline to deploy changes for the blue-green static site stack.
+
+Metadata:
+  Author: Jake Hickenlooper
+  "AWS::Cloudformation::Interface":
+    ParameterGroups:
+      -
+        Label: Project Settings
+        Parameters:
+          - ProjectSlug
+          - SecretHeaderString
+          - GitHubCloneURL
+          - ManualVerificationEmail
+      -
+        Label: Optional Settings
+        Parameters:
+          - GitBranchToBuildFrom
+          - PatternToTriggerBuild
+
+Parameters:
+  ProjectSlug:
+    Type: String
+    Description: >
+      A one word name of the project. Will be used for root object name in
+      buckets and other places. The Parameter Store in AWS Systems Manager will
+      use this as the prefix (like /weboftomorrow/) for parameters.
+    Default: "weboftomorrow"
+    AllowedPattern: "[a-z0-9]+"
+    MinLength: 3
+    MaxLength: 50
+  GitHubCloneURL:
+    Type: String
+    Description: >
+      The https clone URL for the project.
+    Default: ""
+
+  #ManualVerificationEmail:
+  #  Type: String
+  #  Description: >
+  #    Email address to send a notification to when the staging site needs to be
+  #    manually verified.
+  #  Default: ""
+
+  GitBranchToBuildFrom:
+    Type: String
+    Default: "release"
+    Description: >
+      This is the branch that will be checked out when building the static.zip.
+      It is also used when running the code build integration spec.
+  PatternToTriggerBuild:
+    Type: String
+    Default: "^refs/heads/release"
+    Description: >
+      Set the git branch or tags pattern that will trigger a build.
+
+  #SecretHeaderString:
+  #  Type: String
+  #  Description: >
+  #    Secret string in the Referer header that CloudFront will use when
+  #    accessing files from the S3 bucket. This blocks direct public access of
+  #    the static sites bucket unless the Referer header with this string is
+  #    used.
+  #  Default: "None shall pass."
+
+Resources:
+
+  BuildArtifacts:
+    Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LifecycleConfiguration:
+        Rules:
+          -
+            ExpirationInDays: 31
+            NoncurrentVersionExpirationInDays: 20
+            Status: Enabled
+            Prefix: !Ref ProjectSlug
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+
+  BuildArtifactsPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Bucket: !Ref BuildArtifacts
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Action: "s3:GetObject"
+            Effect: "Allow"
+            Principal:
+              Service: 'codepipeline.amazonaws.com'
+            Resource:
+              - !Sub "${BuildArtifacts.Arn}/${ProjectSlug}/*"
+          -
+            Action: "s3:PutObject"
+            Effect: "Allow"
+            Principal:
+              AWS: !GetAtt StaticBuildRole.Arn
+            Resource:
+              - !Sub "${BuildArtifacts.Arn}/${ProjectSlug}/*"
+
+  StaticBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+              - codebuild.amazonaws.com
+        Action:
+          - sts:AssumeRole
+      Path: /
+      RoleName: !Sub "${ProjectSlug}-StaticBuildRole"
+
+  StaticBuild:
+    Type: 'AWS::CodeBuild::Project'
+    Properties:
+      Name: !Sub "${ProjectSlug}-StaticBuild"
+      Artifacts:
+        Type: S3
+        Location: !Ref BuildArtifacts
+        Name: !Ref ProjectSlug
+      LogsConfig:
+        CloudWatchLogs:
+          GroupName: !Sub "${ProjectSlug}-StaticBuild"
+          Status: ENABLED
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/standard:4.0"
+        ImagePullCredentialsType: CODEBUILD
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          -
+            Name: GIT_BRANCH
+            Type: PLAINTEXT
+            Value: !Ref GitBranchToBuildFrom
+      QueuedTimeoutInMinutes: 10
+      ServiceRole: !GetAtt StaticBuildRole.Arn
+      Source:
+        Auth:
+          Type: OAUTH
+        # GitCloneDepth set to 0 to support git submodule checkout
+        GitCloneDepth: 0
+        Location: !Ref GitHubCloneURL
+        Type: GITHUB
+      TimeoutInMinutes: 10
+      Triggers:
+        Webhook: true
+        FilterGroups:
+          -
+            -
+              Type: EVENT
+              Pattern: PUSH
+              ExcludeMatchedPattern: false
+            -
+              ExcludeMatchedPattern: false
+              Pattern: !Ref PatternToTriggerBuild
+              Type: HEAD_REF
+
+#  StaticTest:
+#    Type: 'AWS::CodeBuild::Project'
+#    Properties:
+#      Name: !Sub "${ProjectSlug}-StaticTest"
+#      ServiceRole:
+#        Fn::ImportValue: !Sub "${ProjectSlug}-BuildAndDeployRoleArn"
+#      Environment:
+#        ComputeType: BUILD_GENERAL1_SMALL
+#        Image: "aws/codebuild/standard:4.0"
+#        ImagePullCredentialsType: CODEBUILD
+#        Type: LINUX_CONTAINER
+#        EnvironmentVariables:
+#          -
+#            Name: STAGING_URL
+#            Type: PLAINTEXT
+#            Value: !Sub "http://${CloudFrontStaging.DomainName}"
+#          -
+#            Name: GIT_BRANCH
+#            Type: PLAINTEXT
+#            Value: !Ref GitBranchToBuildFrom
+#      Artifacts:
+#        Type: CODEPIPELINE
+#      Source:
+#        Type: CODEPIPELINE
+#        BuildSpec: buildspec-integration.yml
+#      TimeoutInMinutes: 10
+#      QueuedTimeoutInMinutes: 10
+#      LogsConfig:
+#        CloudWatchLogs:
+#          GroupName: !Sub "${ProjectSlug}-StaticTest"
+#          Status: ENABLED
+#
+#  SyncGreenToBlue:
+#    Type: 'AWS::CodeBuild::Project'
+#    Properties:
+#      Name: !Sub "${ProjectSlug}-SyncGreenToBlue"
+#      ServiceRole:
+#        Fn::ImportValue: !Sub "${ProjectSlug}-BuildAndDeployRoleArn"
+#      Environment:
+#        ComputeType: BUILD_GENERAL1_SMALL
+#        Image: "aws/codebuild/standard:4.0"
+#        ImagePullCredentialsType: CODEBUILD
+#        Type: LINUX_CONTAINER
+#        EnvironmentVariables:
+#          -
+#            Name: STATIC_SITE_FILES_BUCKET
+#            Type: PLAINTEXT
+#            Value:
+#              Fn::ImportValue: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
+#      Artifacts:
+#        Type: CODEPIPELINE
+#      Source:
+#        Type: CODEPIPELINE
+#        BuildSpec: |
+#          version: 0.2
+#          env:
+#            shell: bash
+#            variables:
+#              STATIC_SITE_FILES_BUCKET: ""
+#          phases:
+#            install:
+#              commands:
+#                #- apt-get update
+#                - apt-get --yes install jq
+#            build:
+#              commands:
+#                - BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' parameters.json)
+#                - GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' parameters.json)
+#                # Get the old green version if there is one; otherwise use new BLUE_VERSION
+#                - >
+#                    aws s3 cp
+#                      s3://${STATIC_SITE_FILES_BUCKET}/${ProjectSlug}/production/GREEN_VERSION
+#                      OG
+#                      || echo "${BLUE_VERSION}" > OG
+#                - OLD_GREEN_VERSION=$(cat OG)
+#                - echo $OLD_GREEN_VERSION
+#                # sync old green version to new blue version (if different)
+#                - >
+#                    aws s3 sync
+#                      s3://${STATIC_SITE_FILES_BUCKET}/${ProjectSlug}/production/${OLD_GREEN_VERSION}
+#                      s3://${STATIC_SITE_FILES_BUCKET}/${ProjectSlug}/production/${BLUE_VERSION}
+#                # sync old green version to new green version (if different)
+#                - >
+#                    aws s3 sync
+#                      s3://${STATIC_SITE_FILES_BUCKET}/${ProjectSlug}/production/${OLD_GREEN_VERSION}
+#                      s3://${STATIC_SITE_FILES_BUCKET}/${ProjectSlug}/production/${GREEN_VERSION}
+#      TimeoutInMinutes: 10
+#      QueuedTimeoutInMinutes: 10
+#      LogsConfig:
+#        CloudWatchLogs:
+#          GroupName: !Sub "${ProjectSlug}-SyncGreenToBlue"
+#          Status: ENABLED
+#
+#  DeployGreenVersion:
+#    Type: 'AWS::CodeBuild::Project'
+#    Properties:
+#      Name: !Sub "${ProjectSlug}-DeployGreenVersion"
+#      ServiceRole:
+#        Fn::ImportValue: !Sub "${ProjectSlug}-BuildAndDeployRoleArn"
+#      Environment:
+#        ComputeType: BUILD_GENERAL1_SMALL
+#        Image: "aws/codebuild/standard:4.0"
+#        ImagePullCredentialsType: CODEBUILD
+#        Type: LINUX_CONTAINER
+#        EnvironmentVariables:
+#          -
+#            Name: STATIC_SITE_FILES_BUCKET
+#            Type: PLAINTEXT
+#            Value:
+#              Fn::ImportValue: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
+#      Artifacts:
+#        Type: CODEPIPELINE
+#      Source:
+#        Type: CODEPIPELINE
+#        BuildSpec: |
+#          version: 0.2
+#          env:
+#            shell: bash
+#            variables:
+#              STATIC_SITE_FILES_BUCKET: ""
+#          phases:
+#            install:
+#              commands:
+#                #- apt-get update
+#                - apt-get --yes install jq
+#            build:
+#              commands:
+#                - BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' parameters.json)
+#                - GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' parameters.json)
+#                - VERSION=$(jq -r '.version' package.json)
+#                # sync deployed version to new green version and delete old
+#                # existing files in destination if not in source
+#                - >
+#                    aws s3 sync
+#                      s3://${STATIC_SITE_FILES_BUCKET}/${ProjectSlug}/production/${VERSION}
+#                      s3://${STATIC_SITE_FILES_BUCKET}/${ProjectSlug}/production/${GREEN_VERSION}
+#                      --delete
+#                # Set the new green version file for use by future updates
+#                - echo "${GREEN_VERSION}" > NG
+#                - >
+#                  aws s3 cp \
+#                    NG \
+#                    s3://${STATIC_SITE_FILES_BUCKET}/${ProjectSlug}/production/GREEN_VERSION
+#      TimeoutInMinutes: 10
+#      QueuedTimeoutInMinutes: 10
+#      LogsConfig:
+#        CloudWatchLogs:
+#          GroupName: !Sub "${ProjectSlug}-DeployGreenVersion"
+#          Status: ENABLED
+#
+#  ManualVerificationTopic:
+#    Type: AWS::SNS::Topic
+#    Properties:
+#      DisplayName: !Sub "${ProjectSlug}-ManualVerificationTopic"
+#      Subscription:
+#        -
+#          Protocol: email
+#          Endpoint: !Ref ManualVerificationEmail
+#
+#  StaticPipeline:
+#    Type: AWS::CodePipeline::Pipeline
+#    Properties:
+#      ArtifactStore:
+#        Type: S3
+#        Location: !Ref BuildArtifacts
+#      Name: !Sub "${ProjectSlug}-StaticSite"
+#      RoleArn:
+#        Fn::ImportValue: !Sub "${ProjectSlug}-BuildAndDeployRoleArn"
+#      Stages:
+#        -
+#          Name: Source
+#          Actions:
+#            -
+#              ActionTypeId:
+#                Category: Source
+#                Owner: AWS
+#                Provider: S3
+#                Version: "1"
+#              Configuration:
+#                S3Bucket: !Ref BuildArtifacts
+#                # static.zip here is the GreenVersion
+#                S3ObjectKey: !Sub "${ProjectSlug}/static.zip"
+#                PollForSourceChanges: true
+#              Name: "StaticBuild-artifact"
+#              OutputArtifacts:
+#                - Name: staticZip
+#              RunOrder: 1
+#            -
+#              ActionTypeId:
+#                Category: Source
+#                Owner: AWS
+#                Provider: S3
+#                Version: "1"
+#              Configuration:
+#                S3Bucket: !Ref BuildArtifacts
+#                S3ObjectKey: !Sub "${ProjectSlug}/source.zip"
+#                PollForSourceChanges: false
+#              Name: "StaticBuild-artifact-source"
+#              OutputArtifacts:
+#                - Name: sourceZip
+#              RunOrder: 2
+#            -
+#              ActionTypeId:
+#                Category: Source
+#                Owner: AWS
+#                Provider: S3
+#                Version: "1"
+#              Configuration:
+#                S3Bucket: !Ref BuildArtifacts
+#                S3ObjectKey: !Sub "${ProjectSlug}/parameters.json"
+#                PollForSourceChanges: false
+#              Name: "StaticBuild-artifact-parameters"
+#              OutputArtifacts:
+#                - Name: parametersJSON
+#              RunOrder: 2
+#        -
+#          Name: Stage
+#          Actions:
+#            -
+#              ActionTypeId:
+#                Category: Deploy
+#                Owner: AWS
+#                Provider: S3
+#                Version: "1"
+#              Configuration:
+#                BucketName:
+#                  Fn::ImportValue: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
+#                ObjectKey: !Sub "${ProjectSlug}/stage"
+#                Extract: true
+#              Name: "StaticBuild-stage"
+#              InputArtifacts:
+#                - Name: staticZip
+#              RunOrder: 1
+#
+#            -
+#              ActionTypeId:
+#                Category: Test
+#                Owner: AWS
+#                Provider: CodeBuild
+#                Version: "1"
+#              Configuration:
+#                ProjectName: !Ref StaticTest
+#              Name: "StaticTest-stage"
+#              InputArtifacts:
+#                - Name: sourceZip
+#              RunOrder: 2
+#            -
+#              ActionTypeId:
+#                Category: Approval
+#                Owner: AWS
+#                Provider: Manual
+#                Version: "1"
+#              Configuration:
+#                CustomData: |
+#                  Review the staging website before pushing change to
+#                  production.
+#                ExternalEntityLink: !Sub "http://${CloudFrontStaging.DomainName}"
+#                NotificationArn: !Ref ManualVerificationTopic
+#              Name: "approval-stage"
+#              RunOrder: 3
+#        -
+#          Name: Prep
+#          Actions:
+#            -
+#              Name: "SyncGreenToBlue"
+#              ActionTypeId:
+#                Category: Build
+#                Owner: AWS
+#                Provider: CodeBuild
+#                Version: "1"
+#              InputArtifacts:
+#                - Name: sourceZip
+#              Configuration:
+#                ProjectName: !Ref SyncGreenToBlue
+#              RunOrder: 1
+#        -
+#          Name: Deploy
+#          Actions:
+#            -
+#              ActionTypeId:
+#                Category: Deploy
+#                Owner: AWS
+#                Provider: S3
+#                Version: "1"
+#              Configuration:
+#                BucketName:
+#                  Fn::ImportValue: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
+#                ObjectKey: !Sub "${ProjectSlug}/production"
+#                Extract: true
+#              Name: "StaticBuild-deploy"
+#              InputArtifacts:
+#                - Name: staticZip
+#              RunOrder: 1
+#            -
+#              Name: "StaticBuild-deploy-version"
+#              ActionTypeId:
+#                Category: Build
+#                Owner: AWS
+#                Provider: CodeBuild
+#                Version: "1"
+#              InputArtifacts:
+#                - Name: sourceZip
+#              Configuration:
+#                ProjectName: !Ref DeployGreenVersion
+#              RunOrder: 2
+#
+#            #TODO: Invoke a lambda to set custom headers
+#            # index.html Cache-Control: max-age=0, s-max-age=300
+#            #
+#            # media/* and root/* Cache-Control: max-age=0, s-max-age=604800
+#            #   Deployment will invalidate /media/* path and each file in root/
+#            #   (/robots.txt, humans.txt, favicon.ico)
+#            #   Browser clients must revalidate each time
+#            #
+#            # theme/* Cache-Control: public, max-age=604800, immutable
+#            #   Any files in theme have version as part of the path (/theme/0.0.1/*) and
+#            #   are immutable.
+#
+#        -
+#          Name: Cleanup
+#          Actions:
+#            -
+#              Name: "Cleanup-Lambda"
+#              ActionTypeId:
+#                Category: Invoke
+#                Owner: AWS
+#                Provider: Lambda
+#                Version: "1"
+#              InputArtifacts:
+#                - Name: sourceZip
+#                - Name: staticZip
+#                - Name: parametersJSON
+#              Configuration:
+#                # TODO set LOGGING_LEVEL to info
+#                FunctionName: !Ref CleanupLambda
+#                UserParameters: !Sub
+#                  - |
+#                    {
+#                      "StaticSiteFiles": "${bucketName}"
+#                    }
+#                  -
+#                    bucketName:
+#                      Fn::ImportValue: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
+#              RunOrder: 1
+#
+#  CloudFrontStaging:
+#    Type: 'AWS::CloudFront::Distribution'
+#    Properties:
+#      DistributionConfig:
+#        Comment: >
+#          Staging distribution with no caching set. Uses the green version only.
+#        DefaultCacheBehavior:
+#          Compress: true
+#          TargetOriginId: "green"
+#          # Managed-CachingDisabled
+#          CachePolicyId: "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
+#          ViewerProtocolPolicy: redirect-to-https
+#        DefaultRootObject: index.html
+#        Enabled: true
+#        PriceClass: PriceClass_100
+#        Origins:
+#          -
+#            Id: "green"
+#            CustomOriginConfig:
+#              # The S3 static website is only accessible via http
+#              OriginProtocolPolicy: http-only
+#            DomainName: !Sub
+#              - "${bucketName}.s3-website-${region}.amazonaws.com"
+#              -
+#                bucketName:
+#                  Fn::ImportValue: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
+#                region: !Ref "AWS::Region"
+#            OriginCustomHeaders:
+#              -
+#                HeaderName: Referer
+#                HeaderValue: !Ref SecretHeaderString
+#            OriginPath: !Sub "/${ProjectSlug}/stage/green"
+#
+#  CleanupLambda:
+#    Type: "AWS::Serverless::Function"
+#    Properties:
+#      Description: >
+#        Delete old objects in S3 bucket that are no longer needed.
+#
+#        Will also update the error.html to the most recent green version.
+#      Handler: "llama.handler"
+#      Runtime: python3.8
+#      CodeUri: cleanup/.
+#      Role:
+#        Fn::ImportValue: !Sub "${ProjectSlug}-BuildAndDeployRoleArn"
+#      Timeout: 5
+#
+#  #CleanupLambdaLibs:
+#  #  Type: "AWS::Serverless::LayerVersion"
+#  #  Properties:
+#  #    LayerName: CleanupPythonLayer
+#  #    Description: |
+#  #      Dependencies for the CleanupLambda
+#  #    ContentUri: package/.
+#  #    CompatibleRuntimes:
+#  #      - python3.8

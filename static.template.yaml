@@ -35,13 +35,13 @@ Parameters:
   BlueVersion:
     Type: String
     Description: >
-      A version number for the existing production site that will be replaced.
-    Default: "0.8.1"
+      A version number or static name like 'blue' for the existing production site that will be replaced.
+    Default: "blue"
   GreenVersion:
     Type: String
     Description: >
-      A version number for the new production site that will be deployed.
-    Default: "0.8.2"
+      A version number or static name like 'green' for the new production site that will be deployed.
+    Default: "green"
 
   SecretHeaderString:
     Type: String
@@ -124,10 +124,7 @@ Resources:
             Effect: "Allow"
             Principal:
               AWS:
-                Fn::ImportValue: !Sub "${ProjectSlug}-CleanupLambdaRoleArn"
-              #AWS: !ImportValue "${ProjectSlug}-CleanupLambdaRoleArn"
-              #AWS: Fn::GetAtt: [ !ImportValue "${ProjectSlug}-CleanupLambdaRole", "Arn" ]
-              #AWS: !Sub "arn:aws:iam::${AWS::AccountId}:role/weboftomorrow-CleanupLambdaRole"
+                Fn::ImportValue: !Sub "${ProjectSlug}-BuildAndDeployRoleArn"
             Resource:
               - !Sub "arn:aws:s3:::${StaticSiteFiles}/${ProjectSlug}/production"
               - !Sub "arn:aws:s3:::${StaticSiteFiles}/${ProjectSlug}/production/*"
@@ -137,10 +134,7 @@ Resources:
             Effect: "Allow"
             Principal:
               AWS:
-                Fn::ImportValue: !Sub "${ProjectSlug}-CleanupLambdaRoleArn"
-              #AWS: !ImportValue "${ProjectSlug}-CleanupLambdaRoleArn"
-              #AWS: Fn::GetAtt: [ !ImportValue "${ProjectSlug}-CleanupLambdaRole", "Arn" ]
-              #AWS: !Sub "arn:aws:iam::${AWS::AccountId}:role/weboftomorrow-CleanupLambdaRole"
+                Fn::ImportValue: !Sub "${ProjectSlug}-BuildAndDeployRoleArn"
             Resource:
               - !Sub "arn:aws:s3:::${StaticSiteFiles}"
 

@@ -13,9 +13,9 @@ GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .Paramete
 CHANGE_SET_NAME=$(echo "version-bump-${BLUE_VERSION}-to-${GREEN_VERSION}" | tr --squeeze-repeats [:punct:] '-')
 echo "Creating Change Set: ${CHANGE_SET_NAME}"
 
-cfn-lint root.yaml
-cfn-lint static-site-pipeline.yaml
-cfn-lint static.template.yaml
+#cfn-lint root.yaml
+cfn-lint pipeline.yaml
+#cfn-lint static.template.yaml
 
 (
 rm -rf package;
@@ -27,44 +27,41 @@ pip install --target ../package/python -r requirements.txt
 aws s3 ls "s3://${ARTIFACT_BUCKET}" ||
   aws s3 mb "s3://${ARTIFACT_BUCKET}";
 
-aws cloudformation package \
-  --template-file root.yaml \
-  --s3-bucket $ARTIFACT_BUCKET \
-  --s3-prefix $STACK_NAME \
-  --output-template-file root.package.yml;
+#aws cloudformation package \
+#  --template-file root.yaml \
+#  --s3-bucket $ARTIFACT_BUCKET \
+#  --s3-prefix $STACK_NAME \
+#  --output-template-file root.package.yml;
+#
+#aws cloudformation deploy \
+#  --template-file root.package.yml \
+#  --parameter-overrides file://../www.weboftomorrow.com-personal/parameters.json \
+#  --stack-name $STACK_NAME-root \
+#  --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND;
 
-aws cloudformation deploy \
-  --template-file root.package.yml \
-  --parameter-overrides file://../www.weboftomorrow.com-personal/parameters.json \
-  --stack-name $STACK_NAME-root \
-  --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND;
-
-aws cloudformation package \
-  --template-file static.template.yaml \
-  --s3-bucket $ARTIFACT_BUCKET \
-  --s3-prefix $STACK_NAME \
-  --output-template-file static.template.package.yml;
-
-aws cloudformation deploy \
-  --template-file static.template.package.yml \
-  --parameter-overrides file://../www.weboftomorrow.com-personal/parameters.json \
-  --stack-name $STACK_NAME-static \
-  --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND;
-
-# TODO: get output from stack in order to get the static site files bucket name
-#exit 0
+#aws cloudformation package \
+#  --template-file static.template.yaml \
+#  --s3-bucket $ARTIFACT_BUCKET \
+#  --s3-prefix $STACK_NAME \
+#  --output-template-file static.template.package.yml;
+#aws cloudformation deploy \
+#  --template-file static.template.package.yml \
+#  --parameter-overrides file://../www.weboftomorrow.com-personal/parameters.json \
+#  --stack-name $STACK_NAME-static \
+#  --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND;
 
 aws cloudformation package \
-  --template-file static-site-pipeline.yaml \
+  --template-file pipeline.yaml \
   --s3-bucket $ARTIFACT_BUCKET \
   --s3-prefix $STACK_NAME \
-  --output-template-file static-site-pipeline.package.yml;
+  --output-template-file package.pipeline.yml;
 
 aws cloudformation deploy \
-  --template-file static-site-pipeline.package.yml \
+  --template-file package.pipeline.yml \
   --parameter-overrides file://../www.weboftomorrow.com-personal/parameters.json \
   --stack-name $STACK_NAME-pipeline \
   --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND;
+rm package.pipeline.yml
 
 exit 0
 
