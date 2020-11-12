@@ -2,13 +2,26 @@
 
 set -o errexit -o pipefail -o nounset
 
-ARTIFACT_BUCKET=$1
-STACK_NAME=$2
-REGION=$3
+PARAMETERS_FILE=$1
+
 TIMESTAMP=$(date "+%s")
+ARTIFACT_BUCKET=$(jq -r '.[] | select(.ParameterKey == "ArtifactBucket") | .ParameterValue' $PARAMETERS_FILE)
+STACK_NAME=$(jq -r '.[] | select(.ParameterKey == "ProjectSlug") | .ParameterValue' $PARAMETERS_FILE)
+REGION=$(jq -r '.[] | select(.ParameterKey == "Region") | .ParameterValue' $PARAMETERS_FILE)
 # only a-z A-Z 0-9
-BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' ../www.weboftomorrow.com-personal/parameters.json)
-GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' ../www.weboftomorrow.com-personal/parameters.json)
+BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' $PARAMETERS_FILE)
+GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' $PARAMETERS_FILE)
+
+for item in build-changeset.yaml pipeline.yaml $PARAMETERS_FILE; do
+  aws --profile ${STACK_NAME} s3 cp $item "s3://${ARTIFACT_BUCKET}/cloudformation/source-templates/${STACK_NAME}/"
+done
+
+#TODO: trigger the codebuild for build-changeset
+
+exit 0
+
+
+
 
 CHANGE_SET_NAME=$(echo "version-bump-${BLUE_VERSION}-to-${GREEN_VERSION}" | tr --squeeze-repeats [:punct:] '-')
 echo "Creating Change Set: ${CHANGE_SET_NAME}"
