@@ -1,5 +1,11 @@
 AWSTemplateFormatVersion: "2010-09-09"
 
+Description: >
+  Set up the initial policies, users, and roles.
+
+Metadata:
+  Author: Jake Hickenlooper
+
 Parameters:
 
   ProjectSlug:
@@ -14,6 +20,51 @@ Parameters:
     MaxLength: 50
 
 Resources:
+
+  # No longer using BuildArtifacts bucket. Use ArtifactBucket instead
+  #BuildArtifacts:
+  #  Type: 'AWS::S3::Bucket'
+  #  DeletionPolicy: Retain
+  #  UpdateReplacePolicy: Retain
+  #  Properties:
+  #    LifecycleConfiguration:
+  #      Rules:
+  #        -
+  #          ExpirationInDays: 31
+  #          NoncurrentVersionExpirationInDays: 20
+  #          Status: Enabled
+  #          Prefix: !Ref ProjectSlug
+  #    PublicAccessBlockConfiguration:
+  #      BlockPublicAcls: true
+  #      BlockPublicPolicy: true
+  #      IgnorePublicAcls: true
+  #      RestrictPublicBuckets: true
+  #    VersioningConfiguration:
+  #      Status: Enabled
+
+  #BuildArtifactsPolicy:
+  #  Type: 'AWS::S3::BucketPolicy'
+  #  DeletionPolicy: Retain
+  #  UpdateReplacePolicy: Retain
+  #  Properties:
+  #    Bucket: !Ref BuildArtifacts
+  #    PolicyDocument:
+  #      Version: "2012-10-17"
+  #      Statement:
+  #        -
+  #          Action: "s3:GetObject"
+  #          Effect: "Allow"
+  #          Principal:
+  #            Service: 'codepipeline.amazonaws.com'
+  #          Resource:
+  #            - !Sub "${BuildArtifacts.Arn}/${ProjectSlug}/*"
+  #        -
+  #          Action: "s3:PutObject"
+  #          Effect: "Allow"
+  #          Principal:
+  #            AWS: !GetAtt StaticBuildRole.Arn
+  #          Resource:
+  #            - !Sub "${BuildArtifacts.Arn}/${ProjectSlug}/*"
 
   # TODO: place static site files bucket here, too?
 

@@ -1,29 +1,55 @@
 AWSTemplateFormatVersion: "2010-09-09"
 
 Description: >
-  BuildChangeSet is a codebuild project that is used to create a change set from
+  This stack is meant to be manually created in the AWS Console by referring to
+  the uploaded template in the ArtifactBucket.
+  Creates the BuildChangeSet codebuild resource
+   that is used to create a change set from
   uploaded artifacts in a S3 bucket.
 
 Metadata:
   Author: Jake Hickenlooper
 
 Parameters:
+
   ProjectSlug:
     Type: String
     Description: >
-      A one word name of the project. Will be used for root object name in
-      buckets and other places.
+      A one word name of the project. Used as part of the object key name for
+      uploaded cloudformation templates and parameter JSON files.
+
+      Will be used for root object name in
+      buckets and other places. The Parameter Store in AWS Systems Manager will
+      use this as the prefix (like /weboftomorrow/) for parameters.
     Default: "weboftomorrow"
     AllowedPattern: "[a-z0-9]+"
     MinLength: 3
     MaxLength: 50
+
   ArtifactBucket:
     Type: String
-    Default: "build-artifacts-jkenlooper"
     MaxLength: 63
     Description: >
-      Name of existing S3 bucket that will be used to store packaged
-      CloudFormation templates in.
+      Name of existing S3 bucket that will be used to store CloudFormation
+      templates and parameter JSON files in. The object key prefix used will be
+      /cloudformation/source-templates/[ProjectSlug]/
+      and
+      /cloudformation/package-templates/[ProjectSlug]/
+      .
+
+  GitHubCloneURL:
+    Type: String
+    Description: >
+      The https clone URL for the project.
+    Default: ""
+
+  ManualVerificationEmail:
+    Type: String
+    Description: >
+      Email address to send a notification to when the staging site needs to be
+      manually verified.
+    Default: ""
+
 
 Resources:
 
@@ -168,3 +194,18 @@ Resources:
                       --output text \
                       --query 'Id'
 
+Outputs:
+  ArtifactBucket:
+    Value: !Ref ArtifactBucket
+    Export:
+      Name: !Sub "${ProjectSlug}-ArtifactBucket"
+
+  GitHubCloneURL:
+    Value: !Ref GitHubCloneURL
+    Export:
+      Name: !Sub "${ProjectSlug}-GitHubCloneURL"
+
+  ManualVerificationEmail:
+    Value: !Ref ManualVerificationEmail
+    Export:
+      Name: !Sub "${ProjectSlug}-ManualVerificationEmail"

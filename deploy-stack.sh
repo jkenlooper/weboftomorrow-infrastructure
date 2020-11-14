@@ -11,21 +11,47 @@ REGION=$(jq -r '.[] | select(.ParameterKey == "Region") | .ParameterValue' $PARA
 # only a-z A-Z 0-9
 BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' $PARAMETERS_FILE)
 GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' $PARAMETERS_FILE)
+CF_TEMPLATES="build-change-set.yaml pipeline.yaml"
+RANDOM_STRING="$(head /dev/urandom | tr --delete --complement '[:alnum:] ' | head -c 26)"
 
 TMP_DIR=$(mktemp -d)
+
+handle_no_build_change_set_error() {
+  echo "Failed to start the build for ${STACK_NAME}-BuildChangeSet. Does it exist?"
+  echo "Create the build change set stack in the AWS Console and use this template:"
+  echo "https://${ARTIFACT_BUCKET}.s3-${REGION}.amazonaws.com/cloudformation/source-templates/${STACK_NAME}/build-change-set.yaml"
+}
+
+# Secret string in the Referer header that CloudFront will use when accessing
+# files from the S3 bucket. This blocks direct public access of the static sites
+# bucket unless the Referer header with this string is used.
+cat << HERE > $TMP_DIR/secret-header.json
+[
+  {
+    "ParameterKey": "SecretHeaderString",
+    "ParameterValue": "$RANDOM_STRING"
+  }
+]
+HERE
+
 jq -r \
   'map(
     select(
       .ParameterKey == "ProjectSlug"
-      or .ParameterKey == "GitHubCloneURL"
       or .ParameterKey == "GitBranchToBuildFrom"
       or .ParameterKey == "PatternToTriggerBuild"
-      or .ParameterKey == "ArtifactBucket"
+      or .ParameterKey == "SecretHeaderString"
     )
-  )' \
-  $PARAMETERS_FILE > $TMP_DIR/parameters-pipeline.json
+    ) | .[]' \
+  $PARAMETERS_FILE $TMP_DIR/secret-header.json > $TMP_DIR/parameters-pipeline.json
 
-for item in build-change-set.yaml pipeline.yaml $TMP_DIR/parameters-pipeline.json; do
+cat $TMP_DIR/parameters-pipeline.json
+
+for template in $CF_TEMPLATES; do
+  cfn-lint $template;
+done
+
+for item in $CF_TEMPLATES $TMP_DIR/parameters-pipeline.json; do
   aws --profile ${STACK_NAME} s3 cp $item "s3://${ARTIFACT_BUCKET}/cloudformation/source-templates/${STACK_NAME}/"
 done
 
@@ -34,7 +60,7 @@ aws --profile ${STACK_NAME} \
   --output json \
   --query 'build.buildStatus' \
   codebuild start-build \
-  --project-name weboftomorrow-BuildChangeSet
+  --project-name ${STACK_NAME}-BuildChangeSet || handle_no_build_change_set_error
 
 rm -rf $TMP_DIR
 

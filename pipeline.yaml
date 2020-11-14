@@ -10,102 +10,30 @@ Metadata:
 Parameters:
   ProjectSlug:
     Type: String
-    Description: >
-      A one word name of the project. Will be used for root object name in
-      buckets and other places. The Parameter Store in AWS Systems Manager will
-      use this as the prefix (like /weboftomorrow/) for parameters.
-    Default: "weboftomorrow"
-    AllowedPattern: "[a-z0-9]+"
-    MinLength: 3
-    MaxLength: 50
-  GitHubCloneURL:
-    Type: String
-    Description: >
-      The https clone URL for the project.
-    Default: ""
 
-  ArtifactBucket:
-    Type: String
-    Default: "build-artifacts-jkenlooper"
-    MaxLength: 63
-    Description: >
-      Name of existing S3 bucket that will be used to store packaged
-      CloudFormation templates in.
-
-  #ManualVerificationEmail:
+  #ArtifactBucket:
   #  Type: String
+  #  MaxLength: 63
   #  Description: >
-  #    Email address to send a notification to when the staging site needs to be
-  #    manually verified.
-  #  Default: ""
+  #    Name of existing S3 bucket that will be used to store packaged
+  #    CloudFormation templates in.
 
   GitBranchToBuildFrom:
     Type: String
-    Default: "release"
-    Description: >
-      This is the branch that will be checked out when building the static.zip.
-      It is also used when running the code build integration spec.
+    #Default: "release"
+    #Description: >
+    #  This is the branch that will be checked out when building the static.zip.
+    #  It is also used when running the code build integration spec.
   PatternToTriggerBuild:
     Type: String
-    Default: "^refs/heads/release"
-    Description: >
-      Set the git branch or tags pattern that will trigger a build.
+    #Default: "^refs/heads/release"
+    #Description: >
+    #  Set the git branch or tags pattern that will trigger a build.
 
-  #SecretHeaderString:
-  #  Type: String
-  #  Description: >
-  #    Secret string in the Referer header that CloudFront will use when
-  #    accessing files from the S3 bucket. This blocks direct public access of
-  #    the static sites bucket unless the Referer header with this string is
-  #    used.
-  #  Default: "None shall pass."
+  SecretHeaderString:
+    Type: String
 
 Resources:
-
-  # No longer using BuildArtifacts bucket. Use ArtifactBucket instead
-  #BuildArtifacts:
-  #  Type: 'AWS::S3::Bucket'
-  #  DeletionPolicy: Retain
-  #  UpdateReplacePolicy: Retain
-  #  Properties:
-  #    LifecycleConfiguration:
-  #      Rules:
-  #        -
-  #          ExpirationInDays: 31
-  #          NoncurrentVersionExpirationInDays: 20
-  #          Status: Enabled
-  #          Prefix: !Ref ProjectSlug
-  #    PublicAccessBlockConfiguration:
-  #      BlockPublicAcls: true
-  #      BlockPublicPolicy: true
-  #      IgnorePublicAcls: true
-  #      RestrictPublicBuckets: true
-  #    VersioningConfiguration:
-  #      Status: Enabled
-
-  #BuildArtifactsPolicy:
-  #  Type: 'AWS::S3::BucketPolicy'
-  #  DeletionPolicy: Retain
-  #  UpdateReplacePolicy: Retain
-  #  Properties:
-  #    Bucket: !Ref BuildArtifacts
-  #    PolicyDocument:
-  #      Version: "2012-10-17"
-  #      Statement:
-  #        -
-  #          Action: "s3:GetObject"
-  #          Effect: "Allow"
-  #          Principal:
-  #            Service: 'codepipeline.amazonaws.com'
-  #          Resource:
-  #            - !Sub "${BuildArtifacts.Arn}/${ProjectSlug}/*"
-  #        -
-  #          Action: "s3:PutObject"
-  #          Effect: "Allow"
-  #          Principal:
-  #            AWS: !GetAtt StaticBuildRole.Arn
-  #          Resource:
-  #            - !Sub "${BuildArtifacts.Arn}/${ProjectSlug}/*"
 
   StaticBuildRole:
     Type: AWS::IAM::Role
@@ -118,8 +46,8 @@ Resources:
             Principal:
               Service:
               - codebuild.amazonaws.com
-        Action:
-          - sts:AssumeRole
+            Action:
+              - sts:AssumeRole
       Path: /
       RoleName: !Sub "${ProjectSlug}-StaticBuildRole"
   # TODO: may need to output the StaticBuildRole.Arn in order to
@@ -131,8 +59,8 @@ Resources:
       Name: !Sub "${ProjectSlug}-StaticBuild"
       Artifacts:
         Type: S3
-        Location: !Ref ArtifactBucket
-        Name: !Sub "${ProjectSlug}/StaticBuild"
+        Location:
+          Fn::ImportValue: !Sub "${ProjectSlug}-ArtifactBucket"
       LogsConfig:
         CloudWatchLogs:
           GroupName: !Sub "${ProjectSlug}-StaticBuild"
@@ -154,7 +82,8 @@ Resources:
           Type: OAUTH
         # GitCloneDepth set to 0 to support git submodule checkout
         GitCloneDepth: 0
-        Location: !Ref GitHubCloneURL
+        Location:
+          Fn::ImportValue: !Sub "${ProjectSlug}-GitHubCloneURL"
         Type: GITHUB
       TimeoutInMinutes: 10
       Triggers:
@@ -327,7 +256,8 @@ Resources:
 #      Subscription:
 #        -
 #          Protocol: email
-#          Endpoint: !Ref ManualVerificationEmail
+#          Endpoint:
+#            Fn::ImportValue: !Sub "${ProjectSlug}-ManualVerificationEmail"
 #
 #  StaticPipeline:
 #    Type: AWS::CodePipeline::Pipeline
