@@ -12,11 +12,31 @@ REGION=$(jq -r '.[] | select(.ParameterKey == "Region") | .ParameterValue' $PARA
 BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' $PARAMETERS_FILE)
 GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' $PARAMETERS_FILE)
 
-for item in build-changeset.yaml pipeline.yaml $PARAMETERS_FILE; do
+TMP_DIR=$(mktemp -d)
+jq -r \
+  'map(
+    select(
+      .ParameterKey == "ProjectSlug"
+      or .ParameterKey == "GitHubCloneURL"
+      or .ParameterKey == "GitBranchToBuildFrom"
+      or .ParameterKey == "PatternToTriggerBuild"
+      or .ParameterKey == "ArtifactBucket"
+    )
+  )' \
+  $PARAMETERS_FILE > $TMP_DIR/parameters-pipeline.json
+
+for item in build-changeset.yaml pipeline.yaml $TMP_DIR/parameters-pipeline.json; do
   aws --profile ${STACK_NAME} s3 cp $item "s3://${ARTIFACT_BUCKET}/cloudformation/source-templates/${STACK_NAME}/"
 done
 
-#TODO: trigger the codebuild for build-changeset
+# Trigger the codebuild for build-changeset
+aws --profile ${STACK_NAME} \
+  --output json \
+  --query 'build.buildStatus' \
+  codebuild start-build \
+  --project-name weboftomorrow-BuildChangeSet
+
+rm -rf $TMP_DIR
 
 exit 0
 

@@ -1,7 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 
 Description: >
-  Pipeline to deploy changes for the blue-green static site stack.
+  BuildChangeSet is a codebuild project that is used to create a change set from
+  uploaded artifacts in a S3 bucket.
 
 Metadata:
   Author: Jake Hickenlooper
@@ -135,10 +136,6 @@ Resources:
               STACK_NAME: ""
               REGION: ""
           phases:
-            # Already has jq
-            #install:
-            #  commands:
-            #    - apt-get --yes install jq
             build:
               commands:
                 - BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' parameters.json)
@@ -166,7 +163,7 @@ Resources:
                       --stack-name ${STACK_NAME}-pipeline \
                       --change-set-type $CHANGE_SET_TYPE \
                       --capabilities CAPABILITY_NAMED_IAM \
-                      --parameters file://parameters.json \
+                      --parameters file://parameters-pipeline.json \
                       --template-url "https://${ARTIFACT_BUCKET}.s3-${REGION}.amazonaws.com/cloudformation/package-templates/${STACK_NAME}/pipeline.yaml" \
                       --output text \
                       --query 'Id'

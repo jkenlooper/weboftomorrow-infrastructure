@@ -6,20 +6,6 @@ Description: >
 
 Metadata:
   Author: Jake Hickenlooper
-  "AWS::Cloudformation::Interface":
-    ParameterGroups:
-      -
-        Label: Project Settings
-        Parameters:
-          - ProjectSlug
-          - SecretHeaderString
-          - GitHubCloneURL
-          - ManualVerificationEmail
-      -
-        Label: Optional Settings
-        Parameters:
-          - GitBranchToBuildFrom
-          - PatternToTriggerBuild
 
 Parameters:
   ProjectSlug:
@@ -37,6 +23,14 @@ Parameters:
     Description: >
       The https clone URL for the project.
     Default: ""
+
+  ArtifactBucket:
+    Type: String
+    Default: "build-artifacts-jkenlooper"
+    MaxLength: 63
+    Description: >
+      Name of existing S3 bucket that will be used to store packaged
+      CloudFormation templates in.
 
   #ManualVerificationEmail:
   #  Type: String
@@ -68,49 +62,50 @@ Parameters:
 
 Resources:
 
-  BuildArtifacts:
-    Type: 'AWS::S3::Bucket'
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LifecycleConfiguration:
-        Rules:
-          -
-            ExpirationInDays: 31
-            NoncurrentVersionExpirationInDays: 20
-            Status: Enabled
-            Prefix: !Ref ProjectSlug
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      VersioningConfiguration:
-        Status: Enabled
+  # No longer using BuildArtifacts bucket. Use ArtifactBucket instead
+  #BuildArtifacts:
+  #  Type: 'AWS::S3::Bucket'
+  #  DeletionPolicy: Retain
+  #  UpdateReplacePolicy: Retain
+  #  Properties:
+  #    LifecycleConfiguration:
+  #      Rules:
+  #        -
+  #          ExpirationInDays: 31
+  #          NoncurrentVersionExpirationInDays: 20
+  #          Status: Enabled
+  #          Prefix: !Ref ProjectSlug
+  #    PublicAccessBlockConfiguration:
+  #      BlockPublicAcls: true
+  #      BlockPublicPolicy: true
+  #      IgnorePublicAcls: true
+  #      RestrictPublicBuckets: true
+  #    VersioningConfiguration:
+  #      Status: Enabled
 
-  BuildArtifactsPolicy:
-    Type: 'AWS::S3::BucketPolicy'
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      Bucket: !Ref BuildArtifacts
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          -
-            Action: "s3:GetObject"
-            Effect: "Allow"
-            Principal:
-              Service: 'codepipeline.amazonaws.com'
-            Resource:
-              - !Sub "${BuildArtifacts.Arn}/${ProjectSlug}/*"
-          -
-            Action: "s3:PutObject"
-            Effect: "Allow"
-            Principal:
-              AWS: !GetAtt StaticBuildRole.Arn
-            Resource:
-              - !Sub "${BuildArtifacts.Arn}/${ProjectSlug}/*"
+  #BuildArtifactsPolicy:
+  #  Type: 'AWS::S3::BucketPolicy'
+  #  DeletionPolicy: Retain
+  #  UpdateReplacePolicy: Retain
+  #  Properties:
+  #    Bucket: !Ref BuildArtifacts
+  #    PolicyDocument:
+  #      Version: "2012-10-17"
+  #      Statement:
+  #        -
+  #          Action: "s3:GetObject"
+  #          Effect: "Allow"
+  #          Principal:
+  #            Service: 'codepipeline.amazonaws.com'
+  #          Resource:
+  #            - !Sub "${BuildArtifacts.Arn}/${ProjectSlug}/*"
+  #        -
+  #          Action: "s3:PutObject"
+  #          Effect: "Allow"
+  #          Principal:
+  #            AWS: !GetAtt StaticBuildRole.Arn
+  #          Resource:
+  #            - !Sub "${BuildArtifacts.Arn}/${ProjectSlug}/*"
 
   StaticBuildRole:
     Type: AWS::IAM::Role
@@ -127,6 +122,8 @@ Resources:
           - sts:AssumeRole
       Path: /
       RoleName: !Sub "${ProjectSlug}-StaticBuildRole"
+  # TODO: may need to output the StaticBuildRole.Arn in order to
+  # manually update the bucket policy in ArtifactBucket
 
   StaticBuild:
     Type: 'AWS::CodeBuild::Project'
@@ -134,8 +131,8 @@ Resources:
       Name: !Sub "${ProjectSlug}-StaticBuild"
       Artifacts:
         Type: S3
-        Location: !Ref BuildArtifacts
-        Name: !Ref ProjectSlug
+        Location: !Ref ArtifactBucket
+        Name: !Sub "${ProjectSlug}/StaticBuild"
       LogsConfig:
         CloudWatchLogs:
           GroupName: !Sub "${ProjectSlug}-StaticBuild"
