@@ -25,11 +25,11 @@ jq -r \
   )' \
   $PARAMETERS_FILE > $TMP_DIR/parameters-pipeline.json
 
-for item in build-changeset.yaml pipeline.yaml $TMP_DIR/parameters-pipeline.json; do
+for item in build-change-set.yaml pipeline.yaml $TMP_DIR/parameters-pipeline.json; do
   aws --profile ${STACK_NAME} s3 cp $item "s3://${ARTIFACT_BUCKET}/cloudformation/source-templates/${STACK_NAME}/"
 done
 
-# Trigger the codebuild for build-changeset
+# Trigger the codebuild for build-change-set
 aws --profile ${STACK_NAME} \
   --output json \
   --query 'build.buildStatus' \
