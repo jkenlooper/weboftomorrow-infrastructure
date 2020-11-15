@@ -11,13 +11,6 @@ Parameters:
   ProjectSlug:
     Type: String
 
-  #ArtifactBucket:
-  #  Type: String
-  #  MaxLength: 63
-  #  Description: >
-  #    Name of existing S3 bucket that will be used to store packaged
-  #    CloudFormation templates in.
-
   GitBranchToBuildFrom:
     Type: String
     #Default: "release"
@@ -53,6 +46,41 @@ Resources:
   # TODO: may need to output the StaticBuildRole.Arn in order to
   # manually update the bucket policy in ArtifactBucket
 
+  StaticBuildPolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: !Sub "${ProjectSlug}-StaticBuildPolicy"
+      Roles:
+        - !Ref StaticBuildRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Resource:
+              - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectSlug}/*"
+            Action:
+              - "ssm:GetParameters"
+          -
+            Effect: Allow
+            Action:
+              - "s3:PutObject"
+            Resource:
+              - !Sub
+                  - "arn:aws:s3:::${artifactBucket}/${ProjectSlug}/StaticBuild/*"
+                  -
+                    artifactBucket:
+                      Fn::ImportValue: !Sub "${ProjectSlug}-ArtifactBucket"
+          -
+            Effect: Allow
+            Action:
+              - "logs:CreateLogStream"
+              - "logs:CreateLogGroup"
+              - "logs:PutLogEvents"
+            Resource:
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-StaticBuild:log-stream:*"
+              - !Sub "arn:aws:logs:*:691611515789:log-group:${ProjectSlug}-StaticBuild"
+
   StaticBuild:
     Type: 'AWS::CodeBuild::Project'
     Properties:
@@ -61,6 +89,7 @@ Resources:
         Type: S3
         Location:
           Fn::ImportValue: !Sub "${ProjectSlug}-ArtifactBucket"
+        Path: !Sub "${ProjectSlug}/StaticBuild"
       LogsConfig:
         CloudWatchLogs:
           GroupName: !Sub "${ProjectSlug}-StaticBuild"
