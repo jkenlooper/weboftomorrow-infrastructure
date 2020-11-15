@@ -530,3 +530,8 @@ Resources:
 #  #    ContentUri: package/.
 #  #    CompatibleRuntimes:
 #  #      - python3.8
+Outputs:
+  # TODO: temporary to get around validation error since not currently using the
+  # parameter.
+  tmp:
+    Value: !Ref SecretHeaderString

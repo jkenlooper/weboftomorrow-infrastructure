@@ -3,9 +3,9 @@
 set -o errexit -o pipefail -o nounset
 
 PARAMETERS_FILE=$1
+ARTIFACT_BUCKET=$2
 
 TIMESTAMP=$(date "+%s")
-ARTIFACT_BUCKET=$(jq -r '.[] | select(.ParameterKey == "ArtifactBucket") | .ParameterValue' $PARAMETERS_FILE)
 STACK_NAME=$(jq -r '.[] | select(.ParameterKey == "ProjectSlug") | .ParameterValue' $PARAMETERS_FILE)
 REGION=$(jq -r '.[] | select(.ParameterKey == "Region") | .ParameterValue' $PARAMETERS_FILE)
 # only a-z A-Z 0-9
@@ -34,15 +34,16 @@ cat << HERE > $TMP_DIR/secret-header.json
 ]
 HERE
 
-jq -r \
-  'map(
-    select(
-      .ParameterKey == "ProjectSlug"
-      or .ParameterKey == "GitBranchToBuildFrom"
-      or .ParameterKey == "PatternToTriggerBuild"
-      or .ParameterKey == "SecretHeaderString"
-    )
-    ) | .[]' \
+jq --raw-output --slurp \
+  '.[0] as $a1 | .[1] as $a2 | ($a1 + $a2)
+    | map(
+      select(
+        .ParameterKey == "ProjectSlug"
+        or .ParameterKey == "GitBranchToBuildFrom"
+        or .ParameterKey == "PatternToTriggerBuild"
+        or .ParameterKey == "SecretHeaderString"
+      )
+    )' \
   $PARAMETERS_FILE $TMP_DIR/secret-header.json > $TMP_DIR/parameters-pipeline.json
 
 cat $TMP_DIR/parameters-pipeline.json
