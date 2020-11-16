@@ -2,10 +2,9 @@ AWSTemplateFormatVersion: "2010-09-09"
 
 Description: >
   This stack is meant to be manually created in the AWS Console by referring to
-  the uploaded template in the ArtifactBucket.
-  Creates the BuildChangeSet codebuild resource
-   that is used to create a change set from
-  uploaded artifacts in a S3 bucket.
+  the uploaded template in the ArtifactBucket.  Creates the BuildChangeSet
+  codebuild resource that is used to create a change set from uploaded artifacts
+  in a S3 bucket.
 
 Metadata:
   Author: Jake Hickenlooper
@@ -25,17 +24,6 @@ Parameters:
     AllowedPattern: "[a-z0-9]+"
     MinLength: 3
     MaxLength: 50
-
-  ArtifactBucket:
-    Type: String
-    MaxLength: 63
-    Description: >
-      Name of existing S3 bucket that will be used to store CloudFormation
-      templates and parameter JSON files in. The object key prefix used will be
-      /cloudformation/source-templates/[ProjectSlug]/
-      and
-      /cloudformation/package-templates/[ProjectSlug]/
-      .
 
   GitHubCloneURL:
     Type: String
@@ -95,20 +83,33 @@ Resources:
               - "s3:GetObjectVersion"
               - "s3:ListBucket"
             Resource:
-              - !Sub "arn:aws:s3:::${ArtifactBucket}/cloudformation/source-templates/${ProjectSlug}/*"
+              - !Sub
+                  - "arn:aws:s3:::${artifactBucket}/cloudformation/source-templates/${ProjectSlug}/*"
+                  -
+                    artifactBucket:
+                      Fn::ImportValue: "root-ArtifactBucket"
+
           -
             Effect: Allow
             Action:
               - "s3:ListBucket"
             Resource:
-              - !Sub "arn:aws:s3:::${ArtifactBucket}"
+              - !Sub
+                  - "arn:aws:s3:::${artifactBucket}"
+                  -
+                    artifactBucket:
+                      Fn::ImportValue: "root-ArtifactBucket"
           -
             Effect: Allow
             Action:
               - "s3:PutObject"
               - "s3:GetObject"
             Resource:
-              - !Sub "arn:aws:s3:::${ArtifactBucket}/cloudformation/package-templates/${ProjectSlug}/*"
+              - !Sub
+                  - "arn:aws:s3:::${artifactBucket}/cloudformation/package-templates/${ProjectSlug}/*"
+                  -
+                    artifactBucket:
+                      Fn::ImportValue: "root-ArtifactBucket"
           -
             Effect: Allow
             Action:
@@ -138,7 +139,8 @@ Resources:
           -
             Name: ARTIFACT_BUCKET
             Type: PLAINTEXT
-            Value: !Ref ArtifactBucket
+            Value:
+              Fn::ImportValue: "root-ArtifactBucket"
           -
             Name: STACK_NAME
             Type: PLAINTEXT
@@ -151,7 +153,11 @@ Resources:
       ServiceRole: !GetAtt BuildChangeSetRole.Arn
       TimeoutInMinutes: 10
       Source:
-        Location: !Sub "${ArtifactBucket}/cloudformation/source-templates/${ProjectSlug}/"
+        Location: !Sub
+          - "${artifactBucket}/cloudformation/source-templates/${ProjectSlug}/"
+          -
+            artifactBucket:
+              Fn::ImportValue: "root-ArtifactBucket"
         Type: S3
         BuildSpec: |
           version: 0.2
@@ -195,11 +201,6 @@ Resources:
                       --query 'Id'
 
 Outputs:
-  ArtifactBucket:
-    Value: !Ref ArtifactBucket
-    Export:
-      Name: !Sub "${ProjectSlug}-ArtifactBucket"
-
   GitHubCloneURL:
     Value: !Ref GitHubCloneURL
     Export:

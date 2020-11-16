@@ -70,7 +70,7 @@ Resources:
                   - "arn:aws:s3:::${artifactBucket}/${ProjectSlug}/StaticBuild/*"
                   -
                     artifactBucket:
-                      Fn::ImportValue: !Sub "${ProjectSlug}-ArtifactBucket"
+                      Fn::ImportValue: "root-ArtifactBucket"
           -
             Effect: Allow
             Action:
@@ -84,12 +84,12 @@ Resources:
   StaticBuild:
     Type: 'AWS::CodeBuild::Project'
     Properties:
-      Name: !Sub "${ProjectSlug}-StaticBuild"
+      Name: StaticBuild
       Artifacts:
         Type: S3
         Location:
-          Fn::ImportValue: !Sub "${ProjectSlug}-ArtifactBucket"
-        Path: !Sub "${ProjectSlug}/StaticBuild"
+          Fn::ImportValue: "root-ArtifactBucket"
+        Path: !Ref ProjectSlug
       LogsConfig:
         CloudWatchLogs:
           GroupName: !Sub "${ProjectSlug}-StaticBuild"
@@ -288,191 +288,251 @@ Resources:
 #          Endpoint:
 #            Fn::ImportValue: !Sub "${ProjectSlug}-ManualVerificationEmail"
 #
-#  StaticPipeline:
-#    Type: AWS::CodePipeline::Pipeline
-#    Properties:
-#      ArtifactStore:
-#        Type: S3
-#        Location: !Ref BuildArtifacts
-#      Name: !Sub "${ProjectSlug}-StaticSite"
-#      RoleArn:
-#        Fn::ImportValue: !Sub "${ProjectSlug}-BuildAndDeployRoleArn"
-#      Stages:
-#        -
-#          Name: Source
-#          Actions:
-#            -
-#              ActionTypeId:
-#                Category: Source
-#                Owner: AWS
-#                Provider: S3
-#                Version: "1"
-#              Configuration:
-#                S3Bucket: !Ref BuildArtifacts
-#                # static.zip here is the GreenVersion
-#                S3ObjectKey: !Sub "${ProjectSlug}/static.zip"
-#                PollForSourceChanges: true
-#              Name: "StaticBuild-artifact"
-#              OutputArtifacts:
-#                - Name: staticZip
-#              RunOrder: 1
-#            -
-#              ActionTypeId:
-#                Category: Source
-#                Owner: AWS
-#                Provider: S3
-#                Version: "1"
-#              Configuration:
-#                S3Bucket: !Ref BuildArtifacts
-#                S3ObjectKey: !Sub "${ProjectSlug}/source.zip"
-#                PollForSourceChanges: false
-#              Name: "StaticBuild-artifact-source"
-#              OutputArtifacts:
-#                - Name: sourceZip
-#              RunOrder: 2
-#            -
-#              ActionTypeId:
-#                Category: Source
-#                Owner: AWS
-#                Provider: S3
-#                Version: "1"
-#              Configuration:
-#                S3Bucket: !Ref BuildArtifacts
-#                S3ObjectKey: !Sub "${ProjectSlug}/parameters.json"
-#                PollForSourceChanges: false
-#              Name: "StaticBuild-artifact-parameters"
-#              OutputArtifacts:
-#                - Name: parametersJSON
-#              RunOrder: 2
-#        -
-#          Name: Stage
-#          Actions:
-#            -
-#              ActionTypeId:
-#                Category: Deploy
-#                Owner: AWS
-#                Provider: S3
-#                Version: "1"
-#              Configuration:
-#                BucketName:
-#                  Fn::ImportValue: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
-#                ObjectKey: !Sub "${ProjectSlug}/stage"
-#                Extract: true
-#              Name: "StaticBuild-stage"
-#              InputArtifacts:
-#                - Name: staticZip
-#              RunOrder: 1
-#
-#            -
-#              ActionTypeId:
-#                Category: Test
-#                Owner: AWS
-#                Provider: CodeBuild
-#                Version: "1"
-#              Configuration:
-#                ProjectName: !Ref StaticTest
-#              Name: "StaticTest-stage"
-#              InputArtifacts:
-#                - Name: sourceZip
-#              RunOrder: 2
-#            -
-#              ActionTypeId:
-#                Category: Approval
-#                Owner: AWS
-#                Provider: Manual
-#                Version: "1"
-#              Configuration:
-#                CustomData: |
-#                  Review the staging website before pushing change to
-#                  production.
-#                ExternalEntityLink: !Sub "http://${CloudFrontStaging.DomainName}"
-#                NotificationArn: !Ref ManualVerificationTopic
-#              Name: "approval-stage"
-#              RunOrder: 3
-#        -
-#          Name: Prep
-#          Actions:
-#            -
-#              Name: "SyncGreenToBlue"
-#              ActionTypeId:
-#                Category: Build
-#                Owner: AWS
-#                Provider: CodeBuild
-#                Version: "1"
-#              InputArtifacts:
-#                - Name: sourceZip
-#              Configuration:
-#                ProjectName: !Ref SyncGreenToBlue
-#              RunOrder: 1
-#        -
-#          Name: Deploy
-#          Actions:
-#            -
-#              ActionTypeId:
-#                Category: Deploy
-#                Owner: AWS
-#                Provider: S3
-#                Version: "1"
-#              Configuration:
-#                BucketName:
-#                  Fn::ImportValue: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
-#                ObjectKey: !Sub "${ProjectSlug}/production"
-#                Extract: true
-#              Name: "StaticBuild-deploy"
-#              InputArtifacts:
-#                - Name: staticZip
-#              RunOrder: 1
-#            -
-#              Name: "StaticBuild-deploy-version"
-#              ActionTypeId:
-#                Category: Build
-#                Owner: AWS
-#                Provider: CodeBuild
-#                Version: "1"
-#              InputArtifacts:
-#                - Name: sourceZip
-#              Configuration:
-#                ProjectName: !Ref DeployGreenVersion
-#              RunOrder: 2
-#
-#            #TODO: Invoke a lambda to set custom headers
-#            # index.html Cache-Control: max-age=0, s-max-age=300
-#            #
-#            # media/* and root/* Cache-Control: max-age=0, s-max-age=604800
-#            #   Deployment will invalidate /media/* path and each file in root/
-#            #   (/robots.txt, humans.txt, favicon.ico)
-#            #   Browser clients must revalidate each time
-#            #
-#            # theme/* Cache-Control: public, max-age=604800, immutable
-#            #   Any files in theme have version as part of the path (/theme/0.0.1/*) and
-#            #   are immutable.
-#
-#        -
-#          Name: Cleanup
-#          Actions:
-#            -
-#              Name: "Cleanup-Lambda"
-#              ActionTypeId:
-#                Category: Invoke
-#                Owner: AWS
-#                Provider: Lambda
-#                Version: "1"
-#              InputArtifacts:
-#                - Name: sourceZip
-#                - Name: staticZip
-#                - Name: parametersJSON
-#              Configuration:
-#                # TODO set LOGGING_LEVEL to info
-#                FunctionName: !Ref CleanupLambda
-#                UserParameters: !Sub
-#                  - |
-#                    {
-#                      "StaticSiteFiles": "${bucketName}"
-#                    }
-#                  -
-#                    bucketName:
-#                      Fn::ImportValue: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
-#              RunOrder: 1
+  StaticPipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+              - codepipeline.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      RoleName: !Sub "${ProjectSlug}-StaticPipelineRole"
+
+  StaticPipelinePolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: !Sub "${ProjectSlug}-StaticPipelinePolicy"
+      Roles:
+        - !Ref StaticPipelineRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: Allow
+            Action:
+              - "s3:GetObject"
+            Resource:
+              - !Sub
+                  - "arn:aws:s3:::${artifactBucket}/${ProjectSlug}/StaticBuild/*"
+                  -
+                    artifactBucket:
+                      Fn::ImportValue: "root-ArtifactBucket"
+          -
+            Effect: Allow
+            Action:
+              - "s3:PutObject"
+            Resource:
+              - !Sub
+                  - "arn:aws:s3:::${artifactBucket}/tmp/${ProjectSlug}-StaticPipeline/*"
+                  -
+                    artifactBucket:
+                      Fn::ImportValue: "root-ArtifactBucket"
+          -
+            Effect: Allow
+            Action:
+              - "logs:CreateLogStream"
+              - "logs:CreateLogGroup"
+              - "logs:PutLogEvents"
+            Resource:
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-StaticPipeline:log-stream:*"
+              - !Sub "arn:aws:logs:*:691611515789:log-group:${ProjectSlug}-StaticPipeline"
+
+
+
+  StaticPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      ArtifactStore:
+        Type: S3
+        Location:
+          Fn::ImportValue: "root-ArtifactBucket"
+      Name: !Sub "tmp-${ProjectSlug}-StaticPipeline"
+      RoleArn: !GetAtt StaticPipelineRole.Arn
+      Stages:
+        -
+          Name: Source
+          Actions:
+            -
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: S3
+                Version: "1"
+              Configuration:
+                S3Bucket:
+                  Fn::ImportValue: "root-ArtifactBucket"
+                # static.zip here is the GreenVersion
+                S3ObjectKey: !Sub "${ProjectSlug}/static.zip"
+                PollForSourceChanges: true
+              Name: "StaticBuild-artifact"
+              OutputArtifacts:
+                - Name: staticZip
+              RunOrder: 1
+            -
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: S3
+                Version: "1"
+              Configuration:
+                S3Bucket:
+                  Fn::ImportValue: "root-ArtifactBucket"
+                S3ObjectKey: !Sub "${ProjectSlug}/source.zip"
+                PollForSourceChanges: false
+              Name: "StaticBuild-artifact-source"
+              OutputArtifacts:
+                - Name: sourceZip
+              RunOrder: 2
+            -
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: S3
+                Version: "1"
+              Configuration:
+                S3Bucket:
+                  Fn::ImportValue: "root-ArtifactBucket"
+                S3ObjectKey: !Sub "${ProjectSlug}/parameters.json"
+                PollForSourceChanges: false
+              Name: "StaticBuild-artifact-parameters"
+              OutputArtifacts:
+                - Name: parametersJSON
+              RunOrder: 2
+        -
+          Name: Stage
+          Actions:
+            -
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: S3
+                Version: "1"
+              Configuration:
+                BucketName:
+                  Fn::ImportValue: "root-StaticWebsiteBucket"
+                ObjectKey: !Sub "${ProjectSlug}/stage"
+                Extract: true
+              Name: "StaticBuild-stage"
+              InputArtifacts:
+                - Name: staticZip
+              RunOrder: 1
+
+        #    -
+        #      ActionTypeId:
+        #        Category: Test
+        #        Owner: AWS
+        #        Provider: CodeBuild
+        #        Version: "1"
+        #      Configuration:
+        #        ProjectName: !Ref StaticTest
+        #      Name: "StaticTest-stage"
+        #      InputArtifacts:
+        #        - Name: sourceZip
+        #      RunOrder: 2
+        #    -
+        #      ActionTypeId:
+        #        Category: Approval
+        #        Owner: AWS
+        #        Provider: Manual
+        #        Version: "1"
+        #      Configuration:
+        #        CustomData: |
+        #          Review the staging website before pushing change to
+        #          production.
+        #        ExternalEntityLink: !Sub "http://${CloudFrontStaging.DomainName}"
+        #        NotificationArn: !Ref ManualVerificationTopic
+        #      Name: "approval-stage"
+        #      RunOrder: 3
+        #-
+        #  Name: Prep
+        #  Actions:
+        #    -
+        #      Name: "SyncGreenToBlue"
+        #      ActionTypeId:
+        #        Category: Build
+        #        Owner: AWS
+        #        Provider: CodeBuild
+        #        Version: "1"
+        #      InputArtifacts:
+        #        - Name: sourceZip
+        #      Configuration:
+        #        ProjectName: !Ref SyncGreenToBlue
+        #      RunOrder: 1
+        #-
+        #  Name: Deploy
+        #  Actions:
+        #    -
+        #      ActionTypeId:
+        #        Category: Deploy
+        #        Owner: AWS
+        #        Provider: S3
+        #        Version: "1"
+        #      Configuration:
+        #        BucketName:
+        #          Fn::ImportValue: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
+        #        ObjectKey: !Sub "${ProjectSlug}/production"
+        #        Extract: true
+        #      Name: "StaticBuild-deploy"
+        #      InputArtifacts:
+        #        - Name: staticZip
+        #      RunOrder: 1
+        #    -
+        #      Name: "StaticBuild-deploy-version"
+        #      ActionTypeId:
+        #        Category: Build
+        #        Owner: AWS
+        #        Provider: CodeBuild
+        #        Version: "1"
+        #      InputArtifacts:
+        #        - Name: sourceZip
+        #      Configuration:
+        #        ProjectName: !Ref DeployGreenVersion
+        #      RunOrder: 2
+
+        #    #TODO: Invoke a lambda to set custom headers
+        #    # index.html Cache-Control: max-age=0, s-max-age=300
+        #    #
+        #    # media/* and root/* Cache-Control: max-age=0, s-max-age=604800
+        #    #   Deployment will invalidate /media/* path and each file in root/
+        #    #   (/robots.txt, humans.txt, favicon.ico)
+        #    #   Browser clients must revalidate each time
+        #    #
+        #    # theme/* Cache-Control: public, max-age=604800, immutable
+        #    #   Any files in theme have version as part of the path (/theme/0.0.1/*) and
+        #    #   are immutable.
+
+        #-
+        #  Name: Cleanup
+        #  Actions:
+        #    -
+        #      Name: "Cleanup-Lambda"
+        #      ActionTypeId:
+        #        Category: Invoke
+        #        Owner: AWS
+        #        Provider: Lambda
+        #        Version: "1"
+        #      InputArtifacts:
+        #        - Name: sourceZip
+        #        - Name: staticZip
+        #        - Name: parametersJSON
+        #      Configuration:
+        #        # TODO set LOGGING_LEVEL to info
+        #        FunctionName: !Ref CleanupLambda
+        #        UserParameters: !Sub
+        #          - |
+        #            {
+        #              "StaticSiteFiles": "${bucketName}"
+        #            }
+        #          -
+        #            bucketName:
+        #              Fn::ImportValue: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
+        #      RunOrder: 1
 #
 #  CloudFrontStaging:
 #    Type: 'AWS::CloudFront::Distribution'

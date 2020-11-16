@@ -53,11 +53,11 @@ for template in $CF_TEMPLATES; do
 done
 
 for item in $CF_TEMPLATES $TMP_DIR/parameters-pipeline.json; do
-  aws --profile ${STACK_NAME} s3 cp $item "s3://${ARTIFACT_BUCKET}/cloudformation/source-templates/${STACK_NAME}/"
+  aws --profile artifact-pusher s3 cp $item "s3://${ARTIFACT_BUCKET}/cloudformation/source-templates/${STACK_NAME}/"
 done
 
 # Trigger the codebuild for build-change-set
-aws --profile ${STACK_NAME} \
+aws --profile artifact-pusher \
   --output json \
   --query 'build.buildStatus' \
   codebuild start-build \
