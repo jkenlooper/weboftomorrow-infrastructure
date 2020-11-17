@@ -118,7 +118,7 @@ Resources:
               - "logs:PutLogEvents"
             Resource:
               - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-BuildChangeSet:log-stream:*"
-              - !Sub "arn:aws:logs:*:691611515789:log-group:${ProjectSlug}-BuildChangeSet"
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-BuildChangeSet"
 
   BuildChangeSet:
     Type: 'AWS::CodeBuild::Project'

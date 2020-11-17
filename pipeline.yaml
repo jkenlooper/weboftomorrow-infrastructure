@@ -28,6 +28,57 @@ Parameters:
 
 Resources:
 
+  AmazonCloudWatchEventRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        -
+          PolicyName: !Sub "${ProjectSlug}-cwe-pipeline-execution"
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Effect: Allow
+                Action: codepipeline:StartPipelineExecution
+                Resource: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${StaticPipeline}"
+
+  AmazonCloudWatchEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - 'AWS API Call via CloudTrail'
+        detail:
+          eventSource:
+            - s3.amazonaws.com
+          eventName:
+            - CopyObject
+            - PutObject
+            - CompleteMultipartUpload
+          requestParameters:
+            bucketName:
+              -
+                Fn::ImportValue: "root-ArtifactBucket"
+            key:
+              - !Sub "${ProjectSlug}/StaticBuild/static.zip"
+      Targets:
+        -
+          Arn: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${StaticPipeline}"
+          RoleArn: !GetAtt AmazonCloudWatchEventRole.Arn
+          Id: !Sub "${ProjectSlug}-codepipeline-AppPipeline"
+
   StaticBuildRole:
     Type: AWS::IAM::Role
     Properties:
@@ -316,7 +367,10 @@ Resources:
           -
             Effect: Allow
             Action:
-              - "s3:GetObject"
+              - s3:GetObject
+              - s3:GetObjectVersion
+              - s3:ListBucket
+              - s3:GetBucketVersioning
             Resource:
               - !Sub
                   - "arn:aws:s3:::${artifactBucket}/${ProjectSlug}/StaticBuild/*"
@@ -326,13 +380,36 @@ Resources:
           -
             Effect: Allow
             Action:
-              - "s3:PutObject"
+              - s3:ListBucketVersions
+              - s3:ListBucket
+              - s3:GetBucketVersioning
             Resource:
               - !Sub
-                  - "arn:aws:s3:::${artifactBucket}/tmp/${ProjectSlug}-StaticPipeline/*"
+                  - "arn:aws:s3:::${artifactBucket}"
                   -
                     artifactBucket:
                       Fn::ImportValue: "root-ArtifactBucket"
+          -
+            Effect: Allow
+            Action:
+              - "s3:PutObject"
+            Resource:
+              - !Sub
+                  - "arn:aws:s3:::${artifactBucket}/tmp-${ProjectSlug}-StaticPipeline/*"
+                  -
+                    artifactBucket:
+                      Fn::ImportValue: "root-ArtifactBucket"
+          - Action:
+              - cloudwatch:*
+            Resource: "*"
+            Effect: Allow
+          - Action:
+              - codebuild:BatchGetBuilds
+              - codebuild:StartBuild
+              - codebuild:BatchGetBuildBatches
+              - codebuild:StartBuildBatch
+            Resource: "*"
+            Effect: Allow
           -
             Effect: Allow
             Action:
@@ -342,6 +419,129 @@ Resources:
             Resource:
               - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-StaticPipeline:log-stream:*"
               - !Sub "arn:aws:logs:*:691611515789:log-group:${ProjectSlug}-StaticPipeline"
+
+          # codepipeline somehow needs most if not all of the below permissions.
+          - Action:
+            - iam:PassRole
+            Resource: "*"
+            Effect: Allow
+            Condition:
+              StringEqualsIfExists:
+                iam:PassedToService:
+                - cloudformation.amazonaws.com
+                - elasticbeanstalk.amazonaws.com
+                - ec2.amazonaws.com
+                - ecs-tasks.amazonaws.com
+          - Action:
+            - codecommit:CancelUploadArchive
+            - codecommit:GetBranch
+            - codecommit:GetCommit
+            - codecommit:GetRepository
+            - codecommit:GetUploadArchiveStatus
+            - codecommit:UploadArchive
+            Resource: "*"
+            Effect: Allow
+          - Action:
+            - codedeploy:CreateDeployment
+            - codedeploy:GetApplication
+            - codedeploy:GetApplicationRevision
+            - codedeploy:GetDeployment
+            - codedeploy:GetDeploymentConfig
+            - codedeploy:RegisterApplicationRevision
+            Resource: "*"
+            Effect: Allow
+          - Action:
+            - codestar-connections:UseConnection
+            Resource: "*"
+            Effect: Allow
+          - Action:
+            - elasticbeanstalk:*
+            - ec2:*
+            - elasticloadbalancing:*
+            - autoscaling:*
+            - cloudwatch:*
+            - s3:*
+            - sns:*
+            - cloudformation:*
+            - rds:*
+            - sqs:*
+            - ecs:*
+            Resource: "*"
+            Effect: Allow
+          - Action:
+            - lambda:InvokeFunction
+            - lambda:ListFunctions
+            Resource: "*"
+            Effect: Allow
+          - Action:
+            - opsworks:CreateDeployment
+            - opsworks:DescribeApps
+            - opsworks:DescribeCommands
+            - opsworks:DescribeDeployments
+            - opsworks:DescribeInstances
+            - opsworks:DescribeStacks
+            - opsworks:UpdateApp
+            - opsworks:UpdateStack
+            Resource: "*"
+            Effect: Allow
+          - Action:
+            - cloudformation:CreateStack
+            - cloudformation:DeleteStack
+            - cloudformation:DescribeStacks
+            - cloudformation:UpdateStack
+            - cloudformation:CreateChangeSet
+            - cloudformation:DeleteChangeSet
+            - cloudformation:DescribeChangeSet
+            - cloudformation:ExecuteChangeSet
+            - cloudformation:SetStackPolicy
+            - cloudformation:ValidateTemplate
+            Resource: "*"
+            Effect: Allow
+          - Action:
+            - codebuild:BatchGetBuilds
+            - codebuild:StartBuild
+            - codebuild:BatchGetBuildBatches
+            - codebuild:StartBuildBatch
+            Resource: "*"
+            Effect: Allow
+          - Effect: Allow
+            Action:
+            - devicefarm:ListProjects
+            - devicefarm:ListDevicePools
+            - devicefarm:GetRun
+            - devicefarm:GetUpload
+            - devicefarm:CreateUpload
+            - devicefarm:ScheduleRun
+            Resource: "*"
+          - Effect: Allow
+            Action:
+            - servicecatalog:ListProvisioningArtifacts
+            - servicecatalog:CreateProvisioningArtifact
+            - servicecatalog:DescribeProvisioningArtifact
+            - servicecatalog:DeleteProvisioningArtifact
+            - servicecatalog:UpdateProduct
+            Resource: "*"
+          - Effect: Allow
+            Action:
+            - cloudformation:ValidateTemplate
+            Resource: "*"
+          - Effect: Allow
+            Action:
+            - ecr:DescribeImages
+            Resource: "*"
+          - Effect: Allow
+            Action:
+            - states:DescribeExecution
+            - states:DescribeStateMachine
+            - states:StartExecution
+            Resource: "*"
+          - Effect: Allow
+            Action:
+            - appconfig:StartDeployment
+            - appconfig:StopDeployment
+            - appconfig:GetDeployment
+            Resource: "*"
+
 
 
 
@@ -368,8 +568,8 @@ Resources:
                 S3Bucket:
                   Fn::ImportValue: "root-ArtifactBucket"
                 # static.zip here is the GreenVersion
-                S3ObjectKey: !Sub "${ProjectSlug}/static.zip"
-                PollForSourceChanges: true
+                S3ObjectKey: !Sub "${ProjectSlug}/StaticBuild/static.zip"
+                PollForSourceChanges: false
               Name: "StaticBuild-artifact"
               OutputArtifacts:
                 - Name: staticZip
@@ -383,7 +583,7 @@ Resources:
               Configuration:
                 S3Bucket:
                   Fn::ImportValue: "root-ArtifactBucket"
-                S3ObjectKey: !Sub "${ProjectSlug}/source.zip"
+                S3ObjectKey: !Sub "${ProjectSlug}/StaticBuild/source.zip"
                 PollForSourceChanges: false
               Name: "StaticBuild-artifact-source"
               OutputArtifacts:
@@ -398,7 +598,7 @@ Resources:
               Configuration:
                 S3Bucket:
                   Fn::ImportValue: "root-ArtifactBucket"
-                S3ObjectKey: !Sub "${ProjectSlug}/parameters.json"
+                S3ObjectKey: !Sub "${ProjectSlug}/StaticBuild/parameters.json"
                 PollForSourceChanges: false
               Name: "StaticBuild-artifact-parameters"
               OutputArtifacts:
