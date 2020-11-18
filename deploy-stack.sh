@@ -13,6 +13,8 @@ BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterV
 GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' $PARAMETERS_FILE)
 CF_TEMPLATES="build-change-set.yaml pipeline.yaml"
 RANDOM_STRING="$(head /dev/urandom | tr --delete --complement '[:alnum:] ' | head -c 26)"
+# TODO: Rethink how SecretHeaderString is being created.
+RANDOM_STRING="TODO: change this to something asdf1234 SecretHeaderString"
 
 TMP_DIR=$(mktemp -d)
 
