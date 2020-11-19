@@ -250,13 +250,17 @@ Resources:
     Properties:
       Name: !Sub "${ProjectSlug}-SyncGreenToBlue"
       ServiceRole:
-        Fn::ImportValue: "root-SyncGreenToBlueRoleArn"
+        Fn::ImportValue: "root-S3UpdateWebsiteProductionRoleArn"
       Environment:
         ComputeType: BUILD_GENERAL1_SMALL
         Image: "aws/codebuild/standard:4.0"
         ImagePullCredentialsType: CODEBUILD
         Type: LINUX_CONTAINER
         EnvironmentVariables:
+          -
+            Name: PROJECT_SLUG
+            Type: PLAINTEXT
+            Value: !Ref ProjectSlug
           -
             Name: STATIC_SITE_FILES_BUCKET
             Type: PLAINTEXT
@@ -280,7 +284,7 @@ Resources:
                 # Get the old green version if there is one; otherwise use new BLUE_VERSION
                 - >
                     aws s3 cp \
-                      s3://${STATIC_SITE_FILES_BUCKET}/${ProjectSlug}/production/GREEN_VERSION \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/GREEN_VERSION \
                       OG \
                       || echo "${BLUE_VERSION}" > OG
                 - OLD_GREEN_VERSION=$(cat OG)
@@ -288,13 +292,13 @@ Resources:
                 # sync old green version to new blue version (if different)
                 - >
                     aws s3 sync \
-                      s3://${STATIC_SITE_FILES_BUCKET}/${ProjectSlug}/production/${OLD_GREEN_VERSION} \
-                      s3://${STATIC_SITE_FILES_BUCKET}/${ProjectSlug}/production/${BLUE_VERSION}
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${OLD_GREEN_VERSION} \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${BLUE_VERSION}
                 # sync old green version to new green version (if different)
                 - >
                     aws s3 sync \
-                      s3://${STATIC_SITE_FILES_BUCKET}/${ProjectSlug}/production/${OLD_GREEN_VERSION} \
-                      s3://${STATIC_SITE_FILES_BUCKET}/${ProjectSlug}/production/${GREEN_VERSION}
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${OLD_GREEN_VERSION} \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION}
       TimeoutInMinutes: 10
       QueuedTimeoutInMinutes: 10
       LogsConfig:
@@ -302,62 +306,84 @@ Resources:
           GroupName: !Sub "${ProjectSlug}-SyncGreenToBlue"
           Status: ENABLED
 
-#  DeployGreenVersion:
-#    Type: 'AWS::CodeBuild::Project'
-#    Properties:
-#      Name: !Sub "${ProjectSlug}-DeployGreenVersion"
-#      ServiceRole:
-#        Fn::ImportValue: !Sub "${ProjectSlug}-BuildAndDeployRoleArn"
-#      Environment:
-#        ComputeType: BUILD_GENERAL1_SMALL
-#        Image: "aws/codebuild/standard:4.0"
-#        ImagePullCredentialsType: CODEBUILD
-#        Type: LINUX_CONTAINER
-#        EnvironmentVariables:
-#          -
-#            Name: STATIC_SITE_FILES_BUCKET
-#            Type: PLAINTEXT
-#            Value:
-#              Fn::ImportValue: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
-#      Artifacts:
-#        Type: CODEPIPELINE
-#      Source:
-#        Type: CODEPIPELINE
-#        BuildSpec: |
-#          version: 0.2
-#          env:
-#            shell: bash
-#            variables:
-#              STATIC_SITE_FILES_BUCKET: ""
-#          phases:
-#            install:
-#              commands:
-#                #- apt-get update
-#                - apt-get --yes install jq
-#            build:
-#              commands:
-#                - BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' parameters.json)
-#                - GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' parameters.json)
-#                - VERSION=$(jq -r '.version' package.json)
-#                # sync deployed version to new green version and delete old
-#                # existing files in destination if not in source
-#                - >
-#                    aws s3 sync
-#                      s3://${STATIC_SITE_FILES_BUCKET}/${ProjectSlug}/production/${VERSION}
-#                      s3://${STATIC_SITE_FILES_BUCKET}/${ProjectSlug}/production/${GREEN_VERSION}
-#                      --delete
-#                # Set the new green version file for use by future updates
-#                - echo "${GREEN_VERSION}" > NG
-#                - >
-#                  aws s3 cp \
-#                    NG \
-#                    s3://${STATIC_SITE_FILES_BUCKET}/${ProjectSlug}/production/GREEN_VERSION
-#      TimeoutInMinutes: 10
-#      QueuedTimeoutInMinutes: 10
-#      LogsConfig:
-#        CloudWatchLogs:
-#          GroupName: !Sub "${ProjectSlug}-DeployGreenVersion"
-#          Status: ENABLED
+  DeployGreenVersion:
+    Type: 'AWS::CodeBuild::Project'
+    Properties:
+      Name: !Sub "${ProjectSlug}-DeployGreenVersion"
+      ServiceRole:
+        Fn::ImportValue: "root-S3UpdateWebsiteProductionRoleArn"
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/standard:4.0"
+        ImagePullCredentialsType: CODEBUILD
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          -
+            Name: PROJECT_SLUG
+            Type: PLAINTEXT
+            Value: !Ref ProjectSlug
+          -
+            Name: STATIC_SITE_FILES_BUCKET
+            Type: PLAINTEXT
+            Value:
+              Fn::ImportValue: "root-StaticWebsiteBucket"
+      Artifacts:
+        Type: CODEPIPELINE
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          env:
+            shell: bash
+            variables:
+              STATIC_SITE_FILES_BUCKET: ""
+          phases:
+            install:
+              commands:
+                #- apt-get update
+                - apt-get --yes install jq
+            build:
+              commands:
+                - BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' parameters.json)
+                - GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' parameters.json)
+                - SOURCE_VERSION=$(jq -r '.version' package.json)
+                - >
+                    aws s3 cp \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/VERSION \
+                      VERSION
+                - VERSION=$(cat VERSION)
+                - >
+                    if [ $SOURCE_VERSION != $VERSION ]; then \
+                      echo "Version in package.json ($SOURCE_VERSION) does not match VERSION file ($VERSION)";
+                      exit 1;
+                    else
+                      echo "Deploying version $VERSION";
+                    fi
+                # sync deployed version to new green version and delete old
+                # existing files in destination if not in source
+                - >
+                    aws s3 sync \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION} \
+                      --delete
+                # Set the new green version file for use by future updates
+                - echo "${GREEN_VERSION}" > NG
+                - >
+                  aws s3 cp \
+                    NG \
+                    s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/GREEN_VERSION
+                # Clean up by removing yellow
+                - >
+                    aws s3 rm \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow \
+                      --recursive \
+                      --only-show-errors
+      TimeoutInMinutes: 10
+      QueuedTimeoutInMinutes: 10
+      LogsConfig:
+        CloudWatchLogs:
+          GroupName: !Sub "${ProjectSlug}-DeployGreenVersion"
+          Status: ENABLED
 #
 #  ManualVerificationTopic:
 #    Type: AWS::SNS::Topic
@@ -695,36 +721,36 @@ Resources:
               Configuration:
                 ProjectName: !Ref SyncGreenToBlue
               RunOrder: 1
-        #-
-        #  Name: Deploy
-        #  Actions:
-        #    -
-        #      ActionTypeId:
-        #        Category: Deploy
-        #        Owner: AWS
-        #        Provider: S3
-        #        Version: "1"
-        #      Configuration:
-        #        BucketName:
-        #          Fn::ImportValue: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
-        #        ObjectKey: !Sub "${ProjectSlug}/production"
-        #        Extract: true
-        #      Name: "StaticBuild-deploy"
-        #      InputArtifacts:
-        #        - Name: staticZip
-        #      RunOrder: 1
-        #    -
-        #      Name: "StaticBuild-deploy-version"
-        #      ActionTypeId:
-        #        Category: Build
-        #        Owner: AWS
-        #        Provider: CodeBuild
-        #        Version: "1"
-        #      InputArtifacts:
-        #        - Name: sourceZip
-        #      Configuration:
-        #        ProjectName: !Ref DeployGreenVersion
-        #      RunOrder: 2
+        -
+          Name: Deploy
+          Actions:
+            -
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: S3
+                Version: "1"
+              Configuration:
+                BucketName:
+                  Fn::ImportValue: "root-StaticWebsiteBucket"
+                ObjectKey: !Sub "${ProjectSlug}/production"
+                Extract: true
+              Name: "StaticBuild-deploy"
+              InputArtifacts:
+                - Name: staticZip
+              RunOrder: 1
+            -
+              Name: "StaticBuild-deploy-version"
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              InputArtifacts:
+                - Name: sourceZip
+              Configuration:
+                ProjectName: !Ref DeployGreenVersion
+              RunOrder: 2
 
         #    #TODO: Invoke a lambda to set custom headers
         #    # index.html Cache-Control: max-age=0, s-max-age=300

@@ -41,85 +41,6 @@ Parameters:
 
 Resources:
 
-  BuildChangeSetRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          -
-            Effect: Allow
-            Principal:
-              Service:
-                - codebuild.amazonaws.com
-            Action:
-              - "sts:AssumeRole"
-      Path: /
-      RoleName: !Sub "${ProjectSlug}-BuildChangeSetRole"
-
-  BuildChangeSetPolicy:
-    Type: "AWS::IAM::Policy"
-    Properties:
-      PolicyName: !Sub "${ProjectSlug}-BuildChangeSetPolicy"
-      Roles:
-        - !Ref BuildChangeSetRole
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          -
-            Effect: Allow
-            Action:
-              - "cloudformation:DescribeStackInstance"
-              - "cloudformation:CreateChangeSet"
-              - "cloudformation:DescribeChangeSet"
-              - "cloudformation:DescribeStacks"
-            Resource:
-              - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ProjectSlug}-*/*"
-              - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stackset/${ProjectSlug}-*:*"
-          -
-            Effect: Allow
-            Action:
-              - "s3:GetObject"
-              - "s3:GetObjectVersion"
-              - "s3:ListBucket"
-            Resource:
-              - !Sub
-                  - "arn:aws:s3:::${artifactBucket}/cloudformation/source-templates/${ProjectSlug}/*"
-                  -
-                    artifactBucket:
-                      Fn::ImportValue: "root-ArtifactBucket"
-
-          -
-            Effect: Allow
-            Action:
-              - "s3:ListBucket"
-            Resource:
-              - !Sub
-                  - "arn:aws:s3:::${artifactBucket}"
-                  -
-                    artifactBucket:
-                      Fn::ImportValue: "root-ArtifactBucket"
-          -
-            Effect: Allow
-            Action:
-              - "s3:PutObject"
-              - "s3:GetObject"
-            Resource:
-              - !Sub
-                  - "arn:aws:s3:::${artifactBucket}/cloudformation/package-templates/${ProjectSlug}/*"
-                  -
-                    artifactBucket:
-                      Fn::ImportValue: "root-ArtifactBucket"
-          -
-            Effect: Allow
-            Action:
-              - "logs:CreateLogStream"
-              - "logs:CreateLogGroup"
-              - "logs:PutLogEvents"
-            Resource:
-              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-BuildChangeSet:log-stream:*"
-              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-BuildChangeSet"
-
   BuildChangeSet:
     Type: 'AWS::CodeBuild::Project'
     Properties:
@@ -150,7 +71,8 @@ Resources:
             Type: PLAINTEXT
             Value: !Ref "AWS::Region"
       QueuedTimeoutInMinutes: 10
-      ServiceRole: !GetAtt BuildChangeSetRole.Arn
+      ServiceRole:
+        Fn::ImportValue: root-weboftomorrowBuildChangeSetRoleArn
       TimeoutInMinutes: 10
       Source:
         Location: !Sub
@@ -163,6 +85,8 @@ Resources:
           version: 0.2
           env:
             shell: bash
+            parameter-store:
+              SECRET_HEADER_STRING: /weboftomorrow/secret-header-string
             variables:
               ARTIFACT_BUCKET: ""
               STACK_NAME: ""
@@ -174,12 +98,36 @@ Resources:
                 - GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' parameters.json)
                 - CHANGE_SET_NAME=$(echo "version-bump-${BLUE_VERSION}-to-${GREEN_VERSION}" | tr --squeeze-repeats [:punct:] '-')
                 - CHANGE_SET_TYPE=UPDATE
+                - TMP_DIR=$(mktemp -d)
                 - >
                     aws cloudformation describe-stacks \
                       --stack-name ${STACK_NAME}-pipeline || CHANGE_SET_TYPE=CREATE
 
                 - 'echo "Change Set: ${CHANGE_SET_NAME}" for ${CHANGE_SET_TYPE}'
 
+                # Secret string in the Referer header that CloudFront will use when accessing
+                # files from the S3 bucket. This blocks direct public access of the static sites
+                # bucket unless the Referer header with this string is used.
+                - |
+                    cat << HERE > $TMP_DIR/secret-header.json
+                    [
+                      {
+                        "ParameterKey": "SecretHeaderString",
+                        "ParameterValue": "$SECRET_HEADER_STRING"
+                      }
+                    ]
+                    HERE
+                    jq --raw-output --slurp \
+                      '.[0] as $a1 | .[1] as $a2 | ($a1 + $a2)
+                        | map(
+                          select(
+                            .ParameterKey == "ProjectSlug"
+                            or .ParameterKey == "GitBranchToBuildFrom"
+                            or .ParameterKey == "PatternToTriggerBuild"
+                            or .ParameterKey == "SecretHeaderString"
+                          )
+                        )' \
+                      parameters.json $TMP_DIR/secret-header.json > $TMP_DIR/parameters-pipeline.json
                 - >
                     aws cloudformation package \
                       --template-file pipeline.yaml \
@@ -195,7 +143,7 @@ Resources:
                       --stack-name ${STACK_NAME}-pipeline \
                       --change-set-type $CHANGE_SET_TYPE \
                       --capabilities CAPABILITY_NAMED_IAM \
-                      --parameters file://parameters-pipeline.json \
+                      --parameters file://$TMP_DIR/parameters-pipeline.json \
                       --template-url "https://${ARTIFACT_BUCKET}.s3-${REGION}.amazonaws.com/cloudformation/package-templates/${STACK_NAME}/pipeline.yaml" \
                       --output text \
                       --query 'Id'
