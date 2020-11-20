@@ -11,7 +11,7 @@ REGION=$(jq -r '.[] | select(.ParameterKey == "Region") | .ParameterValue' $PARA
 # only a-z A-Z 0-9
 BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' $PARAMETERS_FILE)
 GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' $PARAMETERS_FILE)
-CF_TEMPLATES="build-change-set.yaml pipeline.yaml"
+CF_TEMPLATES="build-change-set.yaml pipeline.yaml static-website.yaml"
 
 handle_no_build_change_set_error() {
   echo "Failed to start the build for ${STACK_NAME}-BuildChangeSet. Does it exist?"
@@ -22,10 +22,16 @@ for template in $CF_TEMPLATES; do
   cfn-lint $template;
 done
 
+(
+cd cleanup;
+git clean -dx -f;
+)
+
 aws --profile artifact-pusher s3 cp $PARAMETERS_FILE "s3://${ARTIFACT_BUCKET}/cloudformation/source-templates/${STACK_NAME}/parameters.json"
 for item in $CF_TEMPLATES; do
   aws --profile artifact-pusher s3 cp $item "s3://${ARTIFACT_BUCKET}/cloudformation/source-templates/${STACK_NAME}/"
 done
+aws --profile artifact-pusher s3 cp cleanup "s3://${ARTIFACT_BUCKET}/cloudformation/source-templates/${STACK_NAME}/cleanup/" --recursive
 
 # Trigger the codebuild for build-change-set
 aws --profile artifact-pusher \

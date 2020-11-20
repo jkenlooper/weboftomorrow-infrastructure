@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-#Transform: "AWS::Serverless-2016-10-31"
+Transform: "AWS::Serverless-2016-10-31"
 
 Description: >
   Pipeline to deploy changes for the blue-green static site stack.
@@ -366,6 +366,11 @@ Resources:
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION} \
                       --delete
+                # Update the error.html file that will be used
+                - >
+                    aws s3 sync \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow/error.html \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/error.html
                 # Set the new green version file for use by future updates
                 - echo "${GREEN_VERSION}" > NG
                 - >
@@ -764,32 +769,32 @@ Resources:
         #    #   Any files in theme have version as part of the path (/theme/0.0.1/*) and
         #    #   are immutable.
 
-        #-
-        #  Name: Cleanup
-        #  Actions:
-        #    -
-        #      Name: "Cleanup-Lambda"
-        #      ActionTypeId:
-        #        Category: Invoke
-        #        Owner: AWS
-        #        Provider: Lambda
-        #        Version: "1"
-        #      InputArtifacts:
-        #        - Name: sourceZip
-        #        - Name: staticZip
-        #        - Name: parametersJSON
-        #      Configuration:
-        #        # TODO set LOGGING_LEVEL to info
-        #        FunctionName: !Ref CleanupLambda
-        #        UserParameters: !Sub
-        #          - |
-        #            {
-        #              "StaticSiteFiles": "${bucketName}"
-        #            }
-        #          -
-        #            bucketName:
-        #              Fn::ImportValue: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"
-        #      RunOrder: 1
+        -
+          Name: Cleanup
+          Actions:
+            -
+              Name: "Cleanup-Lambda"
+              ActionTypeId:
+                Category: Invoke
+                Owner: AWS
+                Provider: Lambda
+                Version: "1"
+              InputArtifacts:
+                - Name: sourceZip
+                - Name: staticZip
+                - Name: parametersJSON
+              Configuration:
+                # TODO set LOGGING_LEVEL to info
+                FunctionName: !Ref CleanupLambda
+                UserParameters: !Sub
+                  - |
+                    {
+                      "StaticSiteFiles": "${bucketName}"
+                    }
+                  -
+                    bucketName:
+                      Fn::ImportValue: "root-StaticWebsiteBucket"
+              RunOrder: 1
 
   CloudFrontStaging:
     Type: 'AWS::CloudFront::Distribution'
@@ -823,20 +828,18 @@ Resources:
                 HeaderValue: !Ref SecretHeaderString
             OriginPath: !Sub "/${ProjectSlug}/stage/yellow"
 
-#  CleanupLambda:
-#    Type: "AWS::Serverless::Function"
-#    Properties:
-#      Description: >
-#        Delete old objects in S3 bucket that are no longer needed.
-#
-#        Will also update the error.html to the most recent green version.
-#      Handler: "llama.handler"
-#      Runtime: python3.8
-#      CodeUri: cleanup/.
-#      Role:
-#        Fn::ImportValue: !Sub "${ProjectSlug}-BuildAndDeployRoleArn"
-#      Timeout: 5
-#
+  CleanupLambda:
+    Type: "AWS::Serverless::Function"
+    Properties:
+      Description: >
+        Delete old objects in S3 bucket that are no longer needed.
+      Handler: "llama.handler"
+      Runtime: python3.8
+      CodeUri: cleanup/.
+      Role:
+        Fn::ImportValue: "root-S3UpdateWebsiteProductionRoleArn"
+      Timeout: 5
+
 #  #CleanupLambdaLibs:
 #  #  Type: "AWS::Serverless::LayerVersion"
 #  #  Properties:
