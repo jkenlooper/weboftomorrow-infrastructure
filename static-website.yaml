@@ -1,5 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 
+
 Description: >
   A static site backed by CloudFront CDN. Uses a blue-green deployment via two
   origins in an origin group. The origins can be swapped when needing to revert
@@ -59,85 +60,6 @@ Parameters:
 
 Resources:
 
-  StaticSiteFiles:
-    Type: 'AWS::S3::Bucket'
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: false
-        BlockPublicPolicy: false
-        IgnorePublicAcls: false
-        RestrictPublicBuckets: false
-      WebsiteConfiguration:
-        ErrorDocument: !Sub "${ProjectSlug}/error.html"
-        IndexDocument: 'index.html'
-        # TODO: Implement routing rules for objects that have moved?
-        #RoutingRules:
-        #  -
-        #    RoutingRuleCondition:
-        #      HttpErrorCodeReturnedEquals: "404"
-        #      KeyPrefixEquals: !Sub "${ProjectSlug}/this/object/no-longer-exists.jpg"
-        #    RedirectRule:
-        #      ReplaceKeyWith: !Sub "${ProjectSlug}/${GreenVersion}/this/object/is-now-here.jpg"
-      LifecycleConfiguration:
-        Rules:
-          -
-            Id: drop-stage-files
-            ExpirationInDays: 7
-            Prefix: !Sub "${ProjectSlug}/stage"
-            Status: Enabled
-
-  StaticSiteFilesPolicy:
-    Type: 'AWS::S3::BucketPolicy'
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      Bucket: !Ref StaticSiteFiles
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          -
-            Action: "s3:GetObject"
-            Effect: "Allow"
-            Principal: "*"
-            Resource:
-              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/stage"
-              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/stage/*"
-              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/production"
-              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/production/*"
-            Condition:
-              StringLike:
-                "aws:referer": !Ref SecretHeaderString
-          -
-            Action:
-              - "s3:DeleteObject"
-            Effect: "Deny"
-            Principal: "*"
-            Resource:
-              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/production/${BlueVersion}/*"
-              - !Sub "${StaticSiteFiles.Arn}/${ProjectSlug}/production/${GreenVersion}/*"
-          -
-            Action:
-              - "s3:GetObject"
-              - "s3:DeleteObject"
-            Effect: "Allow"
-            Principal:
-              AWS:
-                Fn::ImportValue: !Sub "${ProjectSlug}-BuildAndDeployRoleArn"
-            Resource:
-              - !Sub "arn:aws:s3:::${StaticSiteFiles}/${ProjectSlug}/production"
-              - !Sub "arn:aws:s3:::${StaticSiteFiles}/${ProjectSlug}/production/*"
-          -
-            Action:
-              - "s3:ListBucket"
-            Effect: "Allow"
-            Principal:
-              AWS:
-                Fn::ImportValue: !Sub "${ProjectSlug}-BuildAndDeployRoleArn"
-            Resource:
-              - !Sub "arn:aws:s3:::${StaticSiteFiles}"
-
   CloudFrontProduction:
     Type: 'AWS::CloudFront::Distribution'
     DeletionPolicy: Retain
@@ -179,7 +101,11 @@ Resources:
             CustomOriginConfig:
               # The S3 static website is only accessible via http
               OriginProtocolPolicy: http-only
-            DomainName: !Select [1, !Split ["://", !GetAtt StaticSiteFiles.WebsiteURL]]
+            DomainName: !Select
+              - 1
+              - !Split
+                - "://"
+                - Fn::ImportValue: root-StaticWebsiteURL
             OriginCustomHeaders:
               -
                 HeaderName: Referer
@@ -190,7 +116,12 @@ Resources:
             CustomOriginConfig:
               # The S3 static website is only accessible via http
               OriginProtocolPolicy: http-only
-            DomainName: !Select [1, !Split ["://", !GetAtt StaticSiteFiles.WebsiteURL]]
+            #DomainName: !Select [1, !Split ["://", !GetAtt StaticSiteFiles.WebsiteURL]]
+            DomainName: !Select
+              - 1
+              - !Split
+                - "://"
+                - Fn::ImportValue: root-StaticWebsiteURL
             OriginCustomHeaders:
               -
                 HeaderName: Referer
@@ -241,7 +172,3 @@ Resources:
 Outputs:
   ProductionWebsiteURL:
     Value: !Ref StaticSiteDomainProduction
-  StaticSiteFilesBucketName:
-    Value: !Ref StaticSiteFiles
-    Export:
-      Name: !Sub "${ProjectSlug}-StaticSiteFilesBucketName"

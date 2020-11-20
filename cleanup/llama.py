@@ -5,7 +5,6 @@ import boto3
 
 # TODO:
 #   Any files in the sourceZip root should have invalidations.
-# - Copy 'error.html' from GreenVersion to StaticSiteFiles path "${ProjectSlug}/error.html".
 
 logger = logging.getLogger()
 logger.setLevel(os.environ.get("LOGGING_LEVEL", logging.DEBUG))
