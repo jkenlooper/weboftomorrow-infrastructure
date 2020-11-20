@@ -96,6 +96,7 @@ Resources:
           phases:
             build:
               commands:
+                # Not sure if errexit actually does anything in an AWS CodeBuild environment
                 - set -o errexit
                 - TIMESTAMP=$(date "+%F_%H_%M")
                 - BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' parameters.json)
@@ -160,8 +161,8 @@ Resources:
                         --parameters file://parameters-build-change-set.json \
                         --template-url "https://${ARTIFACT_BUCKET}.s3-${REGION}.amazonaws.com/cloudformation/package-templates/${STACK_NAME}/build-change-set.yaml" \
                         --output text \
-                        --query 'Id'
-                      md5sum parameters-build-change-set.json build-change-set.yaml > $TMP_DIR/build-change-set.md5sum
+                        --query 'Id' && \
+                        md5sum parameters-build-change-set.json build-change-set.yaml > $TMP_DIR/build-change-set.md5sum
                       aws s3 cp $TMP_DIR/build-change-set.md5sum s3://${ARTIFACT_BUCKET}/cloudformation/checksums/${STACK_NAME}/build-change-set.md5sum
                     fi
 
@@ -205,9 +206,55 @@ Resources:
                         --parameters file://parameters-pipeline.json \
                         --template-url "https://${ARTIFACT_BUCKET}.s3-${REGION}.amazonaws.com/cloudformation/package-templates/${STACK_NAME}/pipeline.yaml" \
                         --output text \
-                        --query 'Id'
-                      md5sum parameters-pipeline.json pipeline.yaml > $TMP_DIR/pipeline.md5sum
+                        --query 'Id' && \
+                        md5sum parameters-pipeline.json pipeline.yaml > $TMP_DIR/pipeline.md5sum
                       aws s3 cp $TMP_DIR/pipeline.md5sum s3://${ARTIFACT_BUCKET}/cloudformation/checksums/${STACK_NAME}/pipeline.md5sum
+                    fi
+
+                ## static-website
+                - >
+                    aws cloudformation describe-stacks \
+                      --stack-name ${STACK_NAME}-static-website || CHANGE_SET_TYPE=CREATE
+
+                - 'echo "Change Set for ${STACK_NAME}-static-website: ${CHANGE_SET_NAME}" for ${CHANGE_SET_TYPE}'
+                - |
+                    jq --raw-output --slurp \
+                      '.[0] as $a1 | .[1] as $a2 | ($a1 + $a2)
+                        | map(
+                          select(
+                            .ParameterKey == "ProjectSlug"
+                            or .ParameterKey == "BlueVersion"
+                            or .ParameterKey == "GreenVersion"
+                            or .ParameterKey == "SecretHeaderString"
+                            or .ParameterKey == "HostedZoneId"
+                          )
+                        )' \
+                      parameters.json $TMP_DIR/parameter-store.json > parameters-static-website.json
+                # Skip creating a package and change set if source template and
+                # generated parameters file has not changed from last time.
+                - >
+                    aws s3 cp s3://${ARTIFACT_BUCKET}/cloudformation/checksums/${STACK_NAME}/static-website.md5sum $TMP_DIR/static-website.md5sum || echo 'No static-website.md5sum found. Probably a new CloudFormation template.'
+                - >
+                    if md5sum --check --status $TMP_DIR/static-website.md5sum; then \
+                      echo 'No changes detected for static-website stack; skipping'
+                    else \
+                      aws cloudformation package \
+                        --template-file static-website.yaml \
+                        --s3-bucket $ARTIFACT_BUCKET \
+                        --s3-prefix cloudformation/package-templates/${STACK_NAME} \
+                        --output-template-file $TMP_DIR/static-website.yaml;
+                      aws s3 cp $TMP_DIR/static-website.yaml s3://${ARTIFACT_BUCKET}/cloudformation/package-templates/${STACK_NAME}/
+                      aws cloudformation create-change-set \
+                        --change-set-name $CHANGE_SET_NAME \
+                        --stack-name ${STACK_NAME}-static-website \
+                        --change-set-type $CHANGE_SET_TYPE \
+                        --capabilities CAPABILITY_NAMED_IAM \
+                        --parameters file://parameters-static-website.json \
+                        --template-url "https://${ARTIFACT_BUCKET}.s3-${REGION}.amazonaws.com/cloudformation/package-templates/${STACK_NAME}/static-website.yaml" \
+                        --output text \
+                        --query 'Id' && \
+                        md5sum parameters-static-website.json static-website.yaml > $TMP_DIR/static-website.md5sum
+                      aws s3 cp $TMP_DIR/static-website.md5sum s3://${ARTIFACT_BUCKET}/cloudformation/checksums/${STACK_NAME}/static-website.md5sum
                     fi
 
 Outputs:

@@ -8,55 +8,20 @@ Description: >
 
 Metadata:
   Author: Jake Hickenlooper
-  "AWS::Cloudformation::Interface":
-    ParameterGroups:
-      -
-        Label: Blue-Green Deployment
-        Parameters:
-          - BlueVersion
-          - GreenVersion
-      -
-        Label: Project Settings
-        Parameters:
-          - ProjectSlug
-          - SecretHeaderString
-          - HostedZoneId
 
 Parameters:
   ProjectSlug:
     Type: String
-    Description: >
-      A one word name of the project. Will be used for root object name in
-      buckets and other places. The Parameter Store in AWS Systems Manager will
-      use this as the prefix (like /weboftomorrow/) for parameters.
-    Default: "weboftomorrow"
-    AllowedPattern: "[a-z0-9]+"
-    MinLength: 3
-    MaxLength: 50
   BlueVersion:
     Type: String
-    Description: >
-      A version number or static name like 'blue' for the existing production site that will be replaced.
-    Default: "blue"
   GreenVersion:
     Type: String
-    Description: >
-      A version number or static name like 'green' for the new production site that will be deployed.
-    Default: "green"
 
   SecretHeaderString:
     Type: String
-    Description: >
-      Secret string in the Referer header that CloudFront will use when
-      accessing files from the S3 bucket. This blocks direct public access of
-      the static sites bucket unless the Referer header with this string is
-      used.
-    Default: "None shall pass."
 
   HostedZoneId:
     Type: 'AWS::Route53::HostedZone::Id'
-    Description: An Amazon Route 53 hosted zone ID, such as Z23YXV4OVPL04A.
-    AllowedPattern: ".+"
 
 Resources:
 
@@ -156,7 +121,21 @@ Resources:
         #    # Managed-CachingDisabled
         #    CachePolicyId: "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
 
-  StaticSiteDomainProduction:
+  #TODO: Create a hosted zone resource?
+
+  DomainNameRoot:
+    Type: AWS::Route53::RecordSet
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: weboftomorrow.com.
+      Type: A
+      AliasTarget:
+        # Z2FDTNDATAQYW2 is the hosted zone id of cloudfront domain name.
+        HostedZoneId: Z2FDTNDATAQYW2
+        DNSName: !GetAtt CloudFrontProduction.DomainName
+  DomainNameWWW:
     Type: AWS::Route53::RecordSet
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
@@ -167,8 +146,8 @@ Resources:
       AliasTarget:
         # Z2FDTNDATAQYW2 is the hosted zone id of cloudfront domain name.
         HostedZoneId: Z2FDTNDATAQYW2
-        DNSName: !Sub "http://${CloudFrontProduction.DomainName}"
+        DNSName: !GetAtt CloudFrontProduction.DomainName
 
 Outputs:
   ProductionWebsiteURL:
-    Value: !Ref StaticSiteDomainProduction
+    Value: !Ref DomainNameRoot
