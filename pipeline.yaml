@@ -307,12 +307,19 @@ Resources:
                     else
                       echo "Deploying version $VERSION";
                     fi
-                # sync deployed version to new green version and delete old
-                # existing files in destination if not in source
+                # Sync deployed version to new green version and delete old
+                # existing files in destination if not in source.
+                # TODO: set different Cache-Control headers on certain objects when
+                # syncing from yellow path. Use exclude and include and multiple
+                # syncs to accomplish this.
+                # --exclude '*' --include 'index.html' --include '*/index.html' \
+                # --cache-control 'max-age=0, s-maxage=60' \
                 - >
                     aws s3 sync \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION} \
+                      --cache-control 'max-age=0, s-maxage=60' \
+                      --metadata-directive REPLACE \
                       --delete
                 # Update the error.html file that will be used
                 - >
