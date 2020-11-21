@@ -82,7 +82,7 @@ Resources:
   StaticBuild:
     Type: 'AWS::CodeBuild::Project'
     Properties:
-      Name: !Sub "${ProjectSlug}-StaticBuild"
+      Name: "StaticBuild"
       Artifacts:
         Type: S3
         Location:
