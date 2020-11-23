@@ -151,3 +151,7 @@ Resources:
 Outputs:
   ProductionWebsiteURL:
     Value: !Ref DomainNameRoot
+  CloudFrontProduction:
+    Value: !Ref CloudFrontProduction
+    Export:
+      Name: !Sub "${ProjectSlug}-CloudFrontProduction"
