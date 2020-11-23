@@ -123,6 +123,23 @@ Resources:
 
   #TODO: Create a hosted zone resource?
 
+  InvalidationPolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: !Sub "${ProjectSlug}-InvalidationPolicy"
+      Roles:
+        - Fn::ImportValue:
+            "root-S3UpdateWebsiteProductionRoleName"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: Allow
+            Action:
+              - "cloudfront:create-invalidation"
+            Resource:
+              - !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontProduction}"
+
   DomainNameRoot:
     Type: AWS::Route53::RecordSet
     DeletionPolicy: Retain

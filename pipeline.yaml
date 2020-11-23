@@ -309,12 +309,12 @@ Resources:
                 - GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' parameters.json)
                 - SOURCE_VERSION=$(jq -r '.version' package.json)
                 - TMP_DIR=$(mktemp -d)
-                - >
+                - |
                     aws s3 cp \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/VERSION \
                       VERSION
                 - VERSION=$(cat VERSION)
-                - >
+                - |
                     if [ $SOURCE_VERSION != $VERSION ]; then \
                       echo "Version in package.json ($SOURCE_VERSION) does not match VERSION file ($VERSION)";
                       exit 1;
@@ -330,17 +330,17 @@ Resources:
                 # --cache-control 'max-age=0, s-maxage=60' \
                 # Use max-age of a year on any files in theme directory since
                 # they all have the version as part of the path.
-                - >
+                - |
                     aws s3 sync \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow/theme/${SOURCE_VERSION} \
-                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION}/theme/${SOURCE_VERSION \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION}/theme/${SOURCE_VERSION} \
                       --cache-control 'max-age=31536000' \
                       --metadata-directive REPLACE \
                       --delete
                 # Use max-age of 20 minutes (average time a visitor might be on
                 # the site) and shared max-age of a year for media files.  The
                 # media/* path will use cache invalidations to refresh.
-                - >
+                - |
                     aws s3 sync \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow/media \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION}/media \
@@ -354,7 +354,7 @@ Resources:
                 # For all other files which will mostly be index.html files set
                 # the max-age to 5 minutes for visitor cache and shared max-age
                 # to a year. Will use invalidations to refresh.
-                - >
+                - |
                     aws s3 sync \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION} \
@@ -368,15 +368,20 @@ Resources:
                           "s#.* to s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION}(.*)#\1#" \
                         >> $TMP_DIR/changed-files.txt
 
-                # Create the invalidations for this deployment
-                - >
+                # Create the invalidations for this deployment (skip if no
+                # changed files).
+                - |
                     CHANGED_FILE_COUNT=$(wc -l $TMP_DIR/changed-files.txt | cut -d ' ' -f1)
-                    if $CHANGED_FILE_COUNT > $FILE_COUNT_THRESHOLD_FOR_CACHE_INVALIDATIONS; then
+                    if [ $CHANGED_FILE_COUNT -gt $FILE_COUNT_THRESHOLD_FOR_CACHE_INVALIDATIONS ]; then
                       echo "Changed file count of $CHANGED_FILE_COUNT has passed the $FILE_COUNT_THRESHOLD_FOR_CACHE_INVALIDATIONS threshold; invalidating all paths (/*)"
                       aws cloudfront create-invalidation \
                         --distribution-id $CLOUDFRONT_PRODUCTION \
                         --paths '/*';
+                    elif [ $CHANGED_FILE_COUNT -eq 0 ]; then
+                      echo "No changed files. Skipping cache invalidation creation."
                     else
+                      echo "Creating a cache invalidation for the below files:"
+                      cat $TMP_DIR/changed-files.txt
                       jq --raw-input --null-input --raw-output \
                         --arg caller_reference $CODEBUILD_BUILD_ID \
                         --arg file_count $CHANGED_FILE_COUNT \
@@ -393,18 +398,18 @@ Resources:
                     fi
 
                 # Update the error.html file that will be used
-                - >
+                - |
                     aws s3 sync \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow/error.html \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/error.html
                 # Set the new green version file for use by future updates
                 - echo "${GREEN_VERSION}" > NG
-                - >
+                - |
                   aws s3 cp \
                     NG \
                     s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/GREEN_VERSION
                 # Clean up by removing yellow
-                - >
+                - |
                     aws s3 rm \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow \
                       --recursive \
