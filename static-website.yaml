@@ -136,7 +136,7 @@ Resources:
           -
             Effect: Allow
             Action:
-              - "cloudfront:create-invalidation"
+              - "cloudfront:CreateInvalidation"
             Resource:
               - !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontProduction}"
 

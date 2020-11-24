@@ -130,6 +130,153 @@ Resources:
               Pattern: !Ref PatternToTriggerBuild
               Type: HEAD_REF
 
+  StaticPatch:
+    Type: 'AWS::CodeBuild::Project'
+    Properties:
+      Name: !Sub "${ProjectSlug}-StaticPatch"
+      Description: >
+        Directly patch the S3 production files and invalidate any CloudFront
+        cache for files that have changed.
+      ServiceRole:
+        Fn::ImportValue: "root-S3UpdateWebsiteProductionRoleArn"
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/standard:4.0"
+        ImagePullCredentialsType: CODEBUILD
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          -
+            Name: PROJECT_SLUG
+            Type: PLAINTEXT
+            Value: !Ref ProjectSlug
+          -
+            Name: FILE_COUNT_THRESHOLD_FOR_CACHE_INVALIDATIONS
+            Type: PLAINTEXT
+            Value: !Ref FileCountThresholdForCacheInvalidations
+          -
+            Name: STATIC_SITE_FILES_BUCKET
+            Type: PLAINTEXT
+            Value:
+              Fn::ImportValue: "root-StaticWebsiteBucket"
+
+          -
+            Name: ARTIFACT_BUCKET
+            Type: PLAINTEXT
+            Value:
+              Fn::ImportValue: "root-ArtifactBucket"
+          -
+            Name: CLOUDFRONT_PRODUCTION
+            Type: PLAINTEXT
+            Value:
+              Fn::ImportValue:
+                Fn::Sub: "${ProjectSlug}-CloudFrontProduction"
+      Artifacts:
+        Type: NO_ARTIFACTS
+      LogsConfig:
+        CloudWatchLogs:
+          GroupName: !Sub "${ProjectSlug}-StaticPatch"
+          Status: ENABLED
+      QueuedTimeoutInMinutes: 10
+      Source:
+        Type: NO_SOURCE
+        BuildSpec: |
+          version: 0.2
+          env:
+            shell: bash
+            variables:
+              STATIC_SITE_FILES_BUCKET: ""
+          phases:
+            build:
+              commands:
+                #- TMP_DIR=$(mktemp -d)
+                - |
+                    aws s3 cp \
+                      s3://${ARTIFACT_BUCKET}/${PROJECT_SLUG}/StaticBuild/parameters.json \
+                      parameters.json
+                - BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' parameters.json)
+                - GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' parameters.json)
+                #- |
+                #    aws s3 cp \
+                #      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/VERSION \
+                #      VERSION
+                #- VERSION=$(cat VERSION)
+                #- |
+                #    if [ $VERSION != $GREEN_VERSION ]; then
+                #      echo "Production version and green version are out of sync. Can not patch. Must do a release deployment instead. $VERSION != $GREEN_VERSION"
+                #      exit 1
+                #    fi
+                # get a copy of current production
+                - |
+                    aws s3 cp \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION}/ \
+                      current \
+                      --recursive \
+                      --no-progress
+                - cp -r current new
+                - |
+                    (
+                      cd current
+                      find . -type f -print | xargs md5sum > ../current_checksums
+                    )
+                # get the patch file
+                - |
+                    aws s3 cp \
+                      s3://${ARTIFACT_BUCKET}/${PROJECT_SLUG}/StaticBuild/static-${GREEN_VERSION}.patch \
+                      static.patch \
+                      --no-progress
+                # apply the patch locally to the new directory
+                - |
+                    (
+                      cd new
+                      patch -p1 < ../static.patch
+                      md5sum --check --quiet --ignore-missing ../current_checksums 2> /dev/null | sed -E 's#\./(.+): FAILED$#/\1#' > ../changed-files.txt
+                    )
+                # Do a sync and get the list of changed files
+                - |
+                    aws s3 sync \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION} \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${BLUE_VERSION} \
+                      --no-progress \
+                      --delete
+                    aws s3 sync \
+                      new \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION} \
+                      --no-progress \
+                      --delete
+                # Create the invalidations for this deployment (skip if no
+                # changed files).
+                - |
+                    CHANGED_FILE_COUNT=$(wc -l changed-files.txt | cut -d ' ' -f1)
+                    if [ $CHANGED_FILE_COUNT -gt $FILE_COUNT_THRESHOLD_FOR_CACHE_INVALIDATIONS ]; then
+                      echo "Changed file count of $CHANGED_FILE_COUNT has passed the $FILE_COUNT_THRESHOLD_FOR_CACHE_INVALIDATIONS threshold; invalidating all paths (/*)"
+                      head -n100 changed-files.txt
+                      if [ $CHANGED_FILE_COUNT -gt 100 ]; then
+                        echo "...plus $(($CHANGED_FILE_COUNT - 100)) more files."
+                      fi
+                      aws cloudfront create-invalidation \
+                        --distribution-id $CLOUDFRONT_PRODUCTION \
+                        --paths '/*';
+                    elif [ $CHANGED_FILE_COUNT -eq 0 ]; then
+                      echo "No changed files. Skipping cache invalidation creation."
+                    else
+                      echo "Creating a cache invalidation for the below files:"
+                      cat changed-files.txt
+                      jq --raw-input --null-input --raw-output \
+                        --arg caller_reference $CODEBUILD_BUILD_ID \
+                        --arg file_count $CHANGED_FILE_COUNT \
+                        '[inputs] | {
+                          CallerReference: $caller_reference,
+                          Paths: {
+                            Quantity: $file_count | tonumber,
+                            Items: .
+                          }
+                        }' changed-files.txt > invalidations.json
+                      aws cloudfront create-invalidation \
+                        --distribution-id $CLOUDFRONT_PRODUCTION \
+                        --invalidation-batch file://invalidations.json
+                    fi
+      TimeoutInMinutes: 10
+
   StaticTestRole:
     Type: AWS::IAM::Role
     Properties:
@@ -321,59 +468,84 @@ Resources:
                     else
                       echo "Deploying version $VERSION";
                     fi
+                # Create the list of changed files by checking the
+                # yellow_checksums file with what is in green version.
+                - |
+
+                    aws s3 cp \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow \
+                      $TMP_DIR/yellow \
+                      --recursive \
+                      --no-progress
+                    (
+                      cd $TMP_DIR/yellow
+                      find . -type f -print | xargs md5sum > $TMP_DIR/yellow_checksums
+                    )
+                    aws s3 cp \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION} \
+                      $TMP_DIR/green \
+                      --recursive \
+                      --no-progress
+                    (
+                      cd $TMP_DIR/green
+                      md5sum --check --quiet --ignore-missing $TMP_DIR/yellow_checksums 2> /dev/null | sed -E 's#(.+): FAILED$#/\1#' > $TMP_DIR/changed-files.txt
+                    )
                 # Sync deployed version to new green version and delete old
-                # existing files in destination if not in source.
-                # TODO: set different Cache-Control headers on certain objects when
-                # syncing from yellow path. Use exclude and include and multiple
-                # syncs to accomplish this.
-                # --exclude '*' --include 'index.html' --include '*/index.html' \
-                # --cache-control 'max-age=0, s-maxage=60' \
+                # existing files in destination if not in source.  Using
+                # a holding directory (orange) to store the metadata and such
+                # after it is synced from yellow. The orange directory is then
+                # synced to the green version in one transaction.
                 # Use max-age of a year on any files in theme directory since
                 # they all have the version as part of the path.
                 - |
                     aws s3 sync \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow/theme/${SOURCE_VERSION} \
-                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION}/theme/${SOURCE_VERSION} \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange/theme/${SOURCE_VERSION} \
                       --cache-control 'max-age=31536000' \
-                      --metadata-directive REPLACE \
+                      --no-progress \
                       --delete
                 # Use max-age of 20 minutes (average time a visitor might be on
                 # the site) and shared max-age of a year for media files.  The
-                # media/* path will use cache invalidations to refresh.
+                # media/* path will use cache invalidations to refresh. Using
+                # a longer max-age since it is more likely these don't change
+                # often.
                 - |
                     aws s3 sync \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow/media \
-                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION}/media \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange/media \
                       --cache-control 'max-age=1200, s-maxage=31536000' \
-                      --metadata-directive REPLACE \
                       --no-progress \
-                      --delete \
-                        | sed -E \
-                          "s#.* to s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION}(.*)#\1#" \
-                        >> $TMP_DIR/changed-files.txt
+                      --delete
                 # For all other files which will mostly be index.html files set
                 # the max-age to 5 minutes for visitor cache and shared max-age
                 # to a year. Will use invalidations to refresh.
                 - |
                     aws s3 sync \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow \
-                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION} \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange \
                       --cache-control 'max-age=300, s-maxage=31536000' \
-                      --metadata-directive REPLACE \
                       --exclude "theme/${SOURCE_VERSION}" \
                       --exclude "media" \
                       --no-progress \
-                      --delete \
-                        | sed -E \
-                          "s#.* to s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION}(.*)#\1#" \
+                      --delete
+                # Sync the updated orange to green version
+                - |
+                    aws s3 sync \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION} \
+                      --no-progress \
+                      --delete
                         >> $TMP_DIR/changed-files.txt
-
                 # Create the invalidations for this deployment (skip if no
                 # changed files).
                 - |
                     CHANGED_FILE_COUNT=$(wc -l $TMP_DIR/changed-files.txt | cut -d ' ' -f1)
                     if [ $CHANGED_FILE_COUNT -gt $FILE_COUNT_THRESHOLD_FOR_CACHE_INVALIDATIONS ]; then
                       echo "Changed file count of $CHANGED_FILE_COUNT has passed the $FILE_COUNT_THRESHOLD_FOR_CACHE_INVALIDATIONS threshold; invalidating all paths (/*)"
+                      head -n100 $TMP_DIR/changed-files.txt
+                      if [ $CHANGED_FILE_COUNT -gt 100 ]; then
+                        echo "...plus $(($CHANGED_FILE_COUNT - 100)) more files."
+                      fi
                       aws cloudfront create-invalidation \
                         --distribution-id $CLOUDFRONT_PRODUCTION \
                         --paths '/*';
@@ -396,7 +568,6 @@ Resources:
                         --distribution-id $CLOUDFRONT_PRODUCTION \
                         --invalidation-batch file://$TMP_DIR/invalidations.json
                     fi
-
                 # Update the error.html file that will be used
                 - |
                     aws s3 sync \
