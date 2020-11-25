@@ -208,6 +208,7 @@ Resources:
           phases:
             build:
               commands:
+                - aws --version
                 - |
                     aws s3 cp \
                       s3://${ARTIFACT_BUCKET}/${PROJECT_SLUG}/StaticBuild/parameters.json \
@@ -253,18 +254,21 @@ Resources:
                       new/theme \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange/theme \
                       --cache-control "${CACHE_CONTROL_FOR_THEME}" \
+                      --metadata-directive REPLACE \
                       --no-progress \
                       --delete
                     aws s3 sync \
                       new/media \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange/media \
                       --cache-control "${CACHE_CONTROL_FOR_MEDIA}" \
+                      --metadata-directive REPLACE \
                       --no-progress \
                       --delete
                     aws s3 sync \
                       new \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange \
                       --cache-control "${CACHE_CONTROL_DEFAULT}" \
+                      --metadata-directive REPLACE \
                       --exclude "theme" \
                       --exclude "media" \
                       --no-progress \
@@ -408,6 +412,7 @@ Resources:
           phases:
             build:
               commands:
+                - aws --version
                 - BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' parameters.json)
                 - GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' parameters.json)
                 # Get the old green version if there is one; otherwise use new BLUE_VERSION
@@ -489,12 +494,10 @@ Resources:
             variables:
               STATIC_SITE_FILES_BUCKET: ""
           phases:
-            install:
-              commands:
-                #- apt-get update
-                - apt-get --yes install jq
             build:
               commands:
+                - aws --version
+                - echo "${CACHE_CONTROL_DEFAULT}"
                 - BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' parameters.json)
                 - GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' parameters.json)
                 - SOURCE_VERSION=$(jq -r '.version' package.json)
@@ -533,6 +536,7 @@ Resources:
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow/theme \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange/theme \
                       --cache-control "${CACHE_CONTROL_FOR_THEME}" \
+                      --metadata-directive REPLACE \
                       --no-progress \
                       --delete
                 # Use max-age of 20 minutes (average time a visitor might be on
@@ -545,6 +549,7 @@ Resources:
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow/media \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange/media \
                       --cache-control "${CACHE_CONTROL_FOR_MEDIA}" \
+                      --metadata-directive REPLACE \
                       --no-progress \
                       --delete
                 # For all other files which will mostly be index.html files set
@@ -555,6 +560,7 @@ Resources:
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange \
                       --cache-control "${CACHE_CONTROL_DEFAULT}" \
+                      --metadata-directive REPLACE \
                       --exclude "theme" \
                       --exclude "media" \
                       --no-progress \
