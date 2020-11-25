@@ -131,7 +131,7 @@ def handler(event, context):
 
         production_prefix = '{ProjectSlug}/production/'.format(**source_params)
         keys = list_objects_at_prefix(s3, user_params["StaticSiteFiles"], production_prefix)
-        prefix_to_delete = find_prefix_not_in_set(production_prefix, set('GREEN_VERSION', 'orange', [source_params.get('BlueVersion'), source_params.get('GreenVersion')]), keys)
+        prefix_to_delete = find_prefix_not_in_set(production_prefix, set(['GREEN_VERSION', 'orange', source_params.get('BlueVersion'), source_params.get('GreenVersion')]), keys)
         for old_prefix in prefix_to_delete:
             delete_files(s3, user_params["StaticSiteFiles"], production_prefix + old_prefix)
 
