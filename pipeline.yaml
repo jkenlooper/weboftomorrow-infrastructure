@@ -28,6 +28,15 @@ Parameters:
   FileCountThresholdForCacheInvalidations:
     Type: Number
     Default: 20
+  CacheControlForTheme:
+    Type: String
+    Default: "max-age=31536000"
+  CacheControlForMedia:
+    Type: String
+    Default: "max-age=1200, s-maxage=31536000"
+  CacheControlDefault:
+    Type: String
+    Default: "max-age=300, s-maxage=31536000"
 
 Resources:
 
@@ -158,7 +167,18 @@ Resources:
             Type: PLAINTEXT
             Value:
               Fn::ImportValue: "root-StaticWebsiteBucket"
-
+          -
+            Name: CACHE_CONTROL_FOR_THEME
+            Type: PLAINTEXT
+            Value: !Ref CacheControlForTheme
+          -
+            Name: CACHE_CONTROL_FOR_MEDIA
+            Type: PLAINTEXT
+            Value: !Ref CacheControlForMedia
+          -
+            Name: CACHE_CONTROL_DEFAULT
+            Type: PLAINTEXT
+            Value: !Ref CacheControlDefault
           -
             Name: ARTIFACT_BUCKET
             Type: PLAINTEXT
@@ -188,24 +208,12 @@ Resources:
           phases:
             build:
               commands:
-                #- TMP_DIR=$(mktemp -d)
                 - |
                     aws s3 cp \
                       s3://${ARTIFACT_BUCKET}/${PROJECT_SLUG}/StaticBuild/parameters.json \
                       parameters.json
                 - BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' parameters.json)
                 - GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' parameters.json)
-                #- |
-                #    aws s3 cp \
-                #      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/VERSION \
-                #      VERSION
-                #- VERSION=$(cat VERSION)
-                #- |
-                #    if [ $VERSION != $GREEN_VERSION ]; then
-                #      echo "Production version and green version are out of sync. Can not patch. Must do a release deployment instead. $VERSION != $GREEN_VERSION"
-                #      exit 1
-                #    fi
-                # get a copy of current production
                 - |
                     aws s3 cp \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION}/ \
@@ -218,20 +226,23 @@ Resources:
                       cd current
                       find . -type f -print | xargs md5sum > ../current_checksums
                     )
-                # get the patch file
+                # Get the patch file.
                 - |
                     aws s3 cp \
                       s3://${ARTIFACT_BUCKET}/${PROJECT_SLUG}/StaticBuild/static-${GREEN_VERSION}.patch \
                       static.patch \
                       --no-progress
-                # apply the patch locally to the new directory
+                # Apply the patch locally to the new directory, create the
+                # changed-files.txt by doing a md5sum check.
                 - |
                     (
                       cd new
-                      patch -p1 < ../static.patch
+                      patch --no-backup-if-mismatch --remove-empty-files --force -r - --silent -p1 < ../static.patch
                       md5sum --check --quiet --ignore-missing ../current_checksums 2> /dev/null | sed -E 's#\./(.+): FAILED$#/\1#' > ../changed-files.txt
                     )
-                # Do a sync and get the list of changed files
+                # Deploy the new patched green version and make the old green
+                # version the blue version. Use orange to preserve the metadata
+                # like Cache-Control headers.
                 - |
                     aws s3 sync \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION} \
@@ -239,7 +250,27 @@ Resources:
                       --no-progress \
                       --delete
                     aws s3 sync \
+                      new/theme \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange/theme \
+                      --cache-control "${CACHE_CONTROL_FOR_THEME}" \
+                      --no-progress \
+                      --delete
+                    aws s3 sync \
+                      new/media \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange/media \
+                      --cache-control "${CACHE_CONTROL_FOR_MEDIA}" \
+                      --no-progress \
+                      --delete
+                    aws s3 sync \
                       new \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange \
+                      --cache-control "${CACHE_CONTROL_DEFAULT}" \
+                      --exclude "theme" \
+                      --exclude "media" \
+                      --no-progress \
+                      --delete
+                    aws s3 sync \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION} \
                       --no-progress \
                       --delete
@@ -435,6 +466,18 @@ Resources:
             Value:
               Fn::ImportValue:
                 Fn::Sub: "${ProjectSlug}-CloudFrontProduction"
+          -
+            Name: CACHE_CONTROL_FOR_THEME
+            Type: PLAINTEXT
+            Value: !Ref CacheControlForTheme
+          -
+            Name: CACHE_CONTROL_FOR_MEDIA
+            Type: PLAINTEXT
+            Value: !Ref CacheControlForMedia
+          -
+            Name: CACHE_CONTROL_DEFAULT
+            Type: PLAINTEXT
+            Value: !Ref CacheControlDefault
       Artifacts:
         Type: CODEPIPELINE
       Source:
@@ -456,18 +499,6 @@ Resources:
                 - GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' parameters.json)
                 - SOURCE_VERSION=$(jq -r '.version' package.json)
                 - TMP_DIR=$(mktemp -d)
-                - |
-                    aws s3 cp \
-                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/VERSION \
-                      VERSION
-                - VERSION=$(cat VERSION)
-                - |
-                    if [ $SOURCE_VERSION != $VERSION ]; then \
-                      echo "Version in package.json ($SOURCE_VERSION) does not match VERSION file ($VERSION)";
-                      exit 1;
-                    else
-                      echo "Deploying version $VERSION";
-                    fi
                 # Create the list of changed files by checking the
                 # yellow_checksums file with what is in green version.
                 - |
@@ -499,9 +530,9 @@ Resources:
                 # they all have the version as part of the path.
                 - |
                     aws s3 sync \
-                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow/theme/${SOURCE_VERSION} \
-                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange/theme/${SOURCE_VERSION} \
-                      --cache-control 'max-age=31536000' \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow/theme \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange/theme \
+                      --cache-control "${CACHE_CONTROL_FOR_THEME}" \
                       --no-progress \
                       --delete
                 # Use max-age of 20 minutes (average time a visitor might be on
@@ -513,7 +544,7 @@ Resources:
                     aws s3 sync \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow/media \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange/media \
-                      --cache-control 'max-age=1200, s-maxage=31536000' \
+                      --cache-control "${CACHE_CONTROL_FOR_MEDIA}" \
                       --no-progress \
                       --delete
                 # For all other files which will mostly be index.html files set
@@ -523,8 +554,8 @@ Resources:
                     aws s3 sync \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange \
-                      --cache-control 'max-age=300, s-maxage=31536000' \
-                      --exclude "theme/${SOURCE_VERSION}" \
+                      --cache-control "${CACHE_CONTROL_DEFAULT}" \
+                      --exclude "theme" \
                       --exclude "media" \
                       --no-progress \
                       --delete
@@ -535,7 +566,6 @@ Resources:
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION} \
                       --no-progress \
                       --delete
-                        >> $TMP_DIR/changed-files.txt
                 # Create the invalidations for this deployment (skip if no
                 # changed files).
                 - |

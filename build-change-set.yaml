@@ -181,6 +181,9 @@ Resources:
                             or .ParameterKey == "GitBranchToBuildFrom"
                             or .ParameterKey == "PatternToTriggerBuild"
                             or .ParameterKey == "SecretHeaderString"
+                            or .ParameterKey == "CacheControlForTheme"
+                            or .ParameterKey == "CacheControlForMedia"
+                            or .ParameterKey == "CacheControlDefault"
                           )
                         )' \
                       parameters.json $TMP_DIR/parameter-store.json > parameters-pipeline.json
