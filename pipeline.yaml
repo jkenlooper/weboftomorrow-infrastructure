@@ -34,12 +34,16 @@ Parameters:
   CacheControlForMedia:
     Type: String
     Default: "max-age=1200, s-maxage=31536000"
+  CacheControlForIndexHTML:
+    Type: String
+    Default: "max-age=0, s-maxage=1200"
   CacheControlDefault:
     Type: String
     Default: "max-age=300, s-maxage=31536000"
 
 Resources:
 
+  #TODO: move AmazonCloudWatchEventRole to root stack
   AmazonCloudWatchEventRole:
     Type: AWS::IAM::Role
     Properties:
@@ -176,6 +180,10 @@ Resources:
             Type: PLAINTEXT
             Value: !Ref CacheControlForMedia
           -
+            Name: CACHE_CONTROL_FOR_INDEX_HTML
+            Type: PLAINTEXT
+            Value: !Ref CacheControlForIndexHTML
+          -
             Name: CACHE_CONTROL_DEFAULT
             Type: PLAINTEXT
             Value: !Ref CacheControlDefault
@@ -230,7 +238,7 @@ Resources:
                 # Get the patch file.
                 - |
                     aws s3 cp \
-                      s3://${ARTIFACT_BUCKET}/${PROJECT_SLUG}/StaticBuild/static-${GREEN_VERSION}.patch \
+                      s3://${ARTIFACT_BUCKET}/${PROJECT_SLUG}/StaticBuild/static.patch \
                       static.patch \
                       --no-progress
                 # Apply the patch locally to the new directory, create the
@@ -239,6 +247,7 @@ Resources:
                     (
                       cd new
                       patch --no-backup-if-mismatch --remove-empty-files --force -r - --silent -p1 < ../static.patch
+                      # TODO: Verify that files that have been removed are not added to the changed-files.txt.
                       md5sum --check --quiet --ignore-missing ../current_checksums 2> /dev/null | sed -E 's#\./(.+): FAILED$#/\1#' > ../changed-files.txt
                     )
                 # Deploy the new patched green version and make the old green
@@ -267,10 +276,22 @@ Resources:
                     aws s3 sync \
                       new \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange \
+                      --cache-control "${CACHE_CONTROL_FOR_INDEX_HTML}" \
+                      --metadata-directive REPLACE \
+                      --exclude "*" \
+                      --include "*/index.html" \
+                      --include "index.html" \
+                      --no-progress \
+                      --delete
+                    aws s3 sync \
+                      new \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange \
                       --cache-control "${CACHE_CONTROL_DEFAULT}" \
                       --metadata-directive REPLACE \
                       --exclude "theme" \
                       --exclude "media" \
+                      --exclude "*/index.html" \
+                      --exclude "index.html" \
                       --no-progress \
                       --delete
                     aws s3 sync \
@@ -280,6 +301,10 @@ Resources:
                       --delete
                 # Create the invalidations for this deployment (skip if no
                 # changed files).
+                # TODO: Don't rely on cache invalidation for deployments.
+                # Only root files which rarely change and can't have cache-busting URLs should rely
+                # on cache invalidations. These would be favicon.ico,
+                # robots.txt, humans.txt and such.
                 - |
                     CHANGED_FILE_COUNT=$(wc -l changed-files.txt | cut -d ' ' -f1)
                     if [ $CHANGED_FILE_COUNT -gt $FILE_COUNT_THRESHOLD_FOR_CACHE_INVALIDATIONS ]; then
@@ -288,9 +313,10 @@ Resources:
                       if [ $CHANGED_FILE_COUNT -gt 100 ]; then
                         echo "...plus $(($CHANGED_FILE_COUNT - 100)) more files."
                       fi
-                      aws cloudfront create-invalidation \
-                        --distribution-id $CLOUDFRONT_PRODUCTION \
-                        --paths '/*';
+                      echo "Skipping the actual call to create invalidation"
+                      #aws cloudfront create-invalidation \
+                      #  --distribution-id $CLOUDFRONT_PRODUCTION \
+                      #  --paths '/*';
                     elif [ $CHANGED_FILE_COUNT -eq 0 ]; then
                       echo "No changed files. Skipping cache invalidation creation."
                     else
@@ -306,12 +332,14 @@ Resources:
                             Items: .
                           }
                         }' changed-files.txt > invalidations.json
-                      aws cloudfront create-invalidation \
-                        --distribution-id $CLOUDFRONT_PRODUCTION \
-                        --invalidation-batch file://invalidations.json
+                      echo "Skipping the actual call to create invalidation"
+                      #aws cloudfront create-invalidation \
+                      #  --distribution-id $CLOUDFRONT_PRODUCTION \
+                      #  --invalidation-batch file://invalidations.json
                     fi
       TimeoutInMinutes: 10
 
+  #TODO: move StaticTestRole to root stack?
   StaticTestRole:
     Type: AWS::IAM::Role
     Properties:
@@ -326,8 +354,10 @@ Resources:
             Action:
               - sts:AssumeRole
       Path: /
-      RoleName: !Sub "${ProjectSlug}-StaticTestRole"
+      #TODO: don't specify a RoleName; then will no longer need CAPABILITY_NAMED_IAM
+      #RoleName: !Sub "${ProjectSlug}-StaticTestRole"
 
+  #TODO: move StaticTestPolicy to root stack?
   StaticTestPolicy:
     Type: "AWS::IAM::Policy"
     Properties:
@@ -480,6 +510,10 @@ Resources:
             Type: PLAINTEXT
             Value: !Ref CacheControlForMedia
           -
+            Name: CACHE_CONTROL_FOR_INDEX_HTML
+            Type: PLAINTEXT
+            Value: !Ref CacheControlForIndexHTML
+          -
             Name: CACHE_CONTROL_DEFAULT
             Type: PLAINTEXT
             Value: !Ref CacheControlDefault
@@ -497,7 +531,6 @@ Resources:
             build:
               commands:
                 - aws --version
-                - echo "${CACHE_CONTROL_DEFAULT}"
                 - BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' parameters.json)
                 - GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' parameters.json)
                 - SOURCE_VERSION=$(jq -r '.version' package.json)
@@ -552,6 +585,17 @@ Resources:
                       --metadata-directive REPLACE \
                       --no-progress \
                       --delete
+                - |
+                    aws s3 sync \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange \
+                      --cache-control "${CACHE_CONTROL_FOR_INDEX_HTML}" \
+                      --metadata-directive REPLACE \
+                      --exclude "*" \
+                      --include "*/index.html" \
+                      --include "index.html" \
+                      --no-progress \
+                      --delete
                 # For all other files which will mostly be index.html files set
                 # the max-age to 5 minutes for visitor cache and shared max-age
                 # to a year. Will use invalidations to refresh.
@@ -563,6 +607,8 @@ Resources:
                       --metadata-directive REPLACE \
                       --exclude "theme" \
                       --exclude "media" \
+                      --exclude "*/index.html" \
+                      --exclude "index.html" \
                       --no-progress \
                       --delete
                 # Sync the updated orange to green version
@@ -582,9 +628,10 @@ Resources:
                       if [ $CHANGED_FILE_COUNT -gt 100 ]; then
                         echo "...plus $(($CHANGED_FILE_COUNT - 100)) more files."
                       fi
-                      aws cloudfront create-invalidation \
-                        --distribution-id $CLOUDFRONT_PRODUCTION \
-                        --paths '/*';
+                      echo "Skipping the actual call to create invalidation"
+                      #aws cloudfront create-invalidation \
+                      #  --distribution-id $CLOUDFRONT_PRODUCTION \
+                      #  --paths '/*';
                     elif [ $CHANGED_FILE_COUNT -eq 0 ]; then
                       echo "No changed files. Skipping cache invalidation creation."
                     else
@@ -600,9 +647,10 @@ Resources:
                             Items: .
                           }
                         }' $TMP_DIR/changed-files.txt > $TMP_DIR/invalidations.json
-                      aws cloudfront create-invalidation \
-                        --distribution-id $CLOUDFRONT_PRODUCTION \
-                        --invalidation-batch file://$TMP_DIR/invalidations.json
+                      echo "Skipping the actual call to create invalidation"
+                      #aws cloudfront create-invalidation \
+                      #  --distribution-id $CLOUDFRONT_PRODUCTION \
+                      #  --invalidation-batch file://$TMP_DIR/invalidations.json
                     fi
                 # Update the error.html file that will be used
                 - |
@@ -638,6 +686,7 @@ Resources:
 #          Endpoint:
 #            Fn::ImportValue: !Sub "${ProjectSlug}-ManualVerificationEmail"
 #
+  #TODO: move StaticPipelineRole to root stack?
   StaticPipelineRole:
     Type: AWS::IAM::Role
     Properties:
@@ -652,8 +701,10 @@ Resources:
             Action:
               - sts:AssumeRole
       Path: /
-      RoleName: !Sub "${ProjectSlug}-StaticPipelineRole"
+      #TODO: don't specify a RoleName; then will no longer need CAPABILITY_NAMED_IAM
+      #RoleName: !Sub "${ProjectSlug}-StaticPipelineRole"
 
+  #TODO: move StaticPipelinePolicy to root stack?
   StaticPipelinePolicy:
     Type: "AWS::IAM::Policy"
     Properties:

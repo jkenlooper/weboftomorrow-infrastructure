@@ -18,10 +18,17 @@ Parameters:
     Type: String
 
   SecretHeaderString:
-    Type: String
+    Type: "AWS::SSM::Parameter::Value<String>"
 
   HostedZoneId:
     Type: 'AWS::Route53::HostedZone::Id'
+
+  CloudFrontHostedZoneId:
+    Type: String
+    Default: Z2FDTNDATAQYW2
+    AllowedValues:
+      - Z2FDTNDATAQYW2
+    Description: Z2FDTNDATAQYW2 is the hosted zone id of cloudfront domain name.
 
 Resources:
 
@@ -123,6 +130,7 @@ Resources:
 
   #TODO: Create a hosted zone resource?
 
+  #TODO: move InvalidationPolicy to root stack?
   InvalidationPolicy:
     Type: "AWS::IAM::Policy"
     Properties:
@@ -149,8 +157,7 @@ Resources:
       Name: weboftomorrow.com.
       Type: A
       AliasTarget:
-        # Z2FDTNDATAQYW2 is the hosted zone id of cloudfront domain name.
-        HostedZoneId: Z2FDTNDATAQYW2
+        HostedZoneId: !Ref CloudFrontHostedZoneId
         DNSName: !GetAtt CloudFrontProduction.DomainName
   DomainNameWWW:
     Type: AWS::Route53::RecordSet
@@ -161,8 +168,7 @@ Resources:
       Name: www.weboftomorrow.com.
       Type: A
       AliasTarget:
-        # Z2FDTNDATAQYW2 is the hosted zone id of cloudfront domain name.
-        HostedZoneId: Z2FDTNDATAQYW2
+        HostedZoneId: !Ref CloudFrontHostedZoneId
         DNSName: !GetAtt CloudFrontProduction.DomainName
 
 Outputs:

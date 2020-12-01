@@ -2,15 +2,15 @@
 
 set -o errexit -o pipefail -o nounset
 
-PARAMETERS_FILE=$1
-ARTIFACT_BUCKET=$2
+source .env
+#AWSCONFIG_PROFILE=artifact-pusher
+#PARAMETERS_FILE=$1
 
-TIMESTAMP=$(date "+%s")
+ARTIFACT_BUCKET=$(aws configure get artifact_bucket --profile $AWSCONFIG_PROFILE)
+REGION=$(aws configure get region --profile $AWSCONFIG_PROFILE)
+
 STACK_NAME=$(jq -r '.[] | select(.ParameterKey == "ProjectSlug") | .ParameterValue' $PARAMETERS_FILE)
-REGION=$(jq -r '.[] | select(.ParameterKey == "Region") | .ParameterValue' $PARAMETERS_FILE)
 # only a-z A-Z 0-9
-BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' $PARAMETERS_FILE)
-GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' $PARAMETERS_FILE)
 CF_TEMPLATES="build-change-set.yaml pipeline.yaml static-website.yaml"
 
 handle_no_build_change_set_error() {
@@ -27,14 +27,14 @@ cd cleanup;
 git clean -dx -f;
 )
 
-aws --profile artifact-pusher s3 cp $PARAMETERS_FILE "s3://${ARTIFACT_BUCKET}/cloudformation/source-templates/${STACK_NAME}/parameters.json"
+aws --profile $AWSCONFIG_PROFILE s3 cp $PARAMETERS_FILE "s3://${ARTIFACT_BUCKET}/cloudformation/source-templates/${STACK_NAME}/parameters.json"
 for item in $CF_TEMPLATES; do
-  aws --profile artifact-pusher s3 cp $item "s3://${ARTIFACT_BUCKET}/cloudformation/source-templates/${STACK_NAME}/"
+  aws --profile $AWSCONFIG_PROFILE s3 cp $item "s3://${ARTIFACT_BUCKET}/cloudformation/source-templates/${STACK_NAME}/"
 done
-aws --profile artifact-pusher s3 cp cleanup "s3://${ARTIFACT_BUCKET}/cloudformation/source-templates/${STACK_NAME}/cleanup/" --recursive
+aws --profile $AWSCONFIG_PROFILE s3 cp cleanup "s3://${ARTIFACT_BUCKET}/cloudformation/source-templates/${STACK_NAME}/cleanup/" --recursive
 
-# Trigger the codebuild for build-change-set
-aws --profile artifact-pusher \
+# Trigger the codebuild for weboftomorrow-BuildChangeSet
+aws --profile $AWSCONFIG_PROFILE \
   --output json \
   --query 'build.buildStatus' \
   codebuild start-build \
