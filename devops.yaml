@@ -154,11 +154,13 @@ Resources:
                         --s3-prefix cloudformation/package-templates/${STACK_NAME} \
                         --output-template-file $TMP_DIR/build-change-set.yaml;
                       aws s3 cp $TMP_DIR/build-change-set.yaml s3://${ARTIFACT_BUCKET}/cloudformation/package-templates/${STACK_NAME}/
+                      #TODO: use --role-arn
+                      # Would need to get the arn of the weboftomorrowCloudFormationRole from the root stack.
+                      # Drop --capabilities CAPABILITY_NAMED_IAM \
                       aws cloudformation create-change-set \
                         --change-set-name $CHANGE_SET_NAME \
                         --stack-name ${STACK_NAME} \
                         --change-set-type $CHANGE_SET_TYPE \
-                        --capabilities CAPABILITY_NAMED_IAM \
                         --parameters file://parameters-build-change-set.json \
                         --template-url "https://${ARTIFACT_BUCKET}.s3-${REGION}.amazonaws.com/cloudformation/package-templates/${STACK_NAME}/build-change-set.yaml" \
                         --output text \
@@ -202,11 +204,12 @@ Resources:
                         --s3-prefix cloudformation/package-templates/${STACK_NAME} \
                         --output-template-file $TMP_DIR/pipeline.yaml;
                       aws s3 cp $TMP_DIR/pipeline.yaml s3://${ARTIFACT_BUCKET}/cloudformation/package-templates/${STACK_NAME}/
+                      #TODO: use --role-arn
+                      # Drop --capabilities CAPABILITY_NAMED_IAM \
                       aws cloudformation create-change-set \
                         --change-set-name $CHANGE_SET_NAME \
                         --stack-name ${STACK_NAME}-pipeline \
                         --change-set-type $CHANGE_SET_TYPE \
-                        --capabilities CAPABILITY_NAMED_IAM \
                         --parameters file://parameters-pipeline.json \
                         --template-url "https://${ARTIFACT_BUCKET}.s3-${REGION}.amazonaws.com/cloudformation/package-templates/${STACK_NAME}/pipeline.yaml" \
                         --output text \
@@ -248,11 +251,12 @@ Resources:
                         --s3-prefix cloudformation/package-templates/${STACK_NAME} \
                         --output-template-file $TMP_DIR/static-website.yaml;
                       aws s3 cp $TMP_DIR/static-website.yaml s3://${ARTIFACT_BUCKET}/cloudformation/package-templates/${STACK_NAME}/
+                      #TODO: use --role-arn
+                      # Drop --capabilities CAPABILITY_NAMED_IAM \
                       aws cloudformation create-change-set \
                         --change-set-name $CHANGE_SET_NAME \
                         --stack-name ${STACK_NAME}-static-website \
                         --change-set-type $CHANGE_SET_TYPE \
-                        --capabilities CAPABILITY_NAMED_IAM \
                         --parameters file://parameters-static-website.json \
                         --template-url "https://${ARTIFACT_BUCKET}.s3-${REGION}.amazonaws.com/cloudformation/package-templates/${STACK_NAME}/static-website.yaml" \
                         --output text \
@@ -271,3 +275,4 @@ Outputs:
     Value: !Ref ManualVerificationEmail
     Export:
       Name: !Sub "${ProjectSlug}-ManualVerificationEmail"
+
