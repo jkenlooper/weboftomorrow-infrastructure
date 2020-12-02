@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+SKIP_CHECKSUM=$1
+
 set -o errexit -o pipefail -o nounset
 
 source .env
@@ -9,14 +11,14 @@ source .env
 ARTIFACT_BUCKET=$(aws configure get artifact_bucket --profile $AWSCONFIG_PROFILE)
 REGION=$(aws configure get region --profile $AWSCONFIG_PROFILE)
 
-STACK_NAME=$(jq -r '.[] | select(.ParameterKey == "ProjectSlug") | .ParameterValue' $PARAMETERS_FILE)
+STACK_NAME=weboftomorrow
 # only a-z A-Z 0-9
-CF_TEMPLATES="build-change-set.yaml pipeline.yaml static-website.yaml"
+CF_TEMPLATES="build-change-set.cfn.yaml devops.cfn.yaml $STACK_NAME.cfn.yaml"
 
 handle_no_build_change_set_error() {
   echo "Failed to start the build for ${STACK_NAME}-BuildChangeSet. Does it exist?"
   echo "Create the build change set stack in the AWS Console and use this template:"
-  echo "https://${ARTIFACT_BUCKET}.s3-${REGION}.amazonaws.com/cloudformation/source-templates/${STACK_NAME}/build-change-set.yaml"
+  echo "https://${ARTIFACT_BUCKET}.s3-${REGION}.amazonaws.com/cloudformation/source-templates/${STACK_NAME}/build-change-set.cfn.yaml"
 }
 for template in $CF_TEMPLATES; do
   cfn-lint $template;
@@ -38,4 +40,5 @@ aws --profile $AWSCONFIG_PROFILE \
   --output json \
   --query 'build.buildStatus' \
   codebuild start-build \
+  --environment-variables-override "name=SKIP_CHECKSUM,value=$SKIP_CHECKSUM,type=PLAINTEXT" \
   --project-name ${STACK_NAME}-BuildChangeSet || handle_no_build_change_set_error

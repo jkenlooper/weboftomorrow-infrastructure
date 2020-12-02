@@ -1,0 +1,194 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+  This stack is meant to be manually created in the AWS Console by referring to
+  the uploaded template in the ArtifactBucket.  Creates the BuildChangeSet
+  codebuild resource that is used to create a change set from uploaded artifacts
+  in a S3 bucket.
+
+Metadata:
+  Author: Jake Hickenlooper
+
+Parameters:
+
+  ProjectSlug:
+    Type: String
+    Description: >
+      A one word name of the project. Used as part of the CloudFormation stack names
+      and is the first path component in parameter store. Should not be changed.
+    Default: "weboftomorrow"
+    AllowedPattern: "[a-z0-9]+"
+    AllowedValues:
+      - "weboftomorrow"
+    MinLength: 3
+    MaxLength: 50
+
+Resources:
+  #TODO: do a md5sum of files in cleanup so it will trigger a build when needed
+
+  BuildChangeSet:
+    Type: 'AWS::CodeBuild::Project'
+    Properties:
+      Name: !Sub "${ProjectSlug}-BuildChangeSet"
+      Artifacts:
+        Type: NO_ARTIFACTS
+      LogsConfig:
+        CloudWatchLogs:
+          GroupName: !Sub "${ProjectSlug}-BuildChangeSet"
+          Status: ENABLED
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/standard:4.0"
+        ImagePullCredentialsType: CODEBUILD
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          -
+            Name: ARTIFACT_BUCKET
+            Type: PLAINTEXT
+            Value:
+              Fn::ImportValue: "root-ArtifactBucket"
+          -
+            Name: STACK_NAME
+            Type: PLAINTEXT
+            Value: !Ref ProjectSlug
+          -
+            Name: REGION
+            Type: PLAINTEXT
+            Value: !Ref "AWS::Region"
+          -
+            Name: ROLE_ARN
+            Type: PLAINTEXT
+            Value:
+              Fn::ImportValue: "root-weboftomorrowCloudFormationRoleArn"
+      QueuedTimeoutInMinutes: 10
+      ServiceRole:
+        Fn::ImportValue: root-weboftomorrowBuildChangeSetRoleArn
+      TimeoutInMinutes: 10
+      Source:
+        Location: !Sub
+          - "${artifactBucket}/cloudformation/source-templates/${ProjectSlug}/"
+          -
+            artifactBucket:
+              Fn::ImportValue: "root-ArtifactBucket"
+        Type: S3
+        BuildSpec: |
+          version: 0.2
+          env:
+            shell: bash
+            variables:
+              ARTIFACT_BUCKET: ""
+              STACK_NAME: ""
+              REGION: ""
+              SKIP_CHECKSUM: ""
+          phases:
+            build:
+              commands:
+                - TIMESTAMP=$(date "+%F_%H_%M")
+                - BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' parameters.json)
+                - GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' parameters.json)
+                - CHANGE_SET_NAME=$(echo "version-bump-${BLUE_VERSION}-to-${GREEN_VERSION}-${TIMESTAMP}" | tr --squeeze-repeats [:punct:] '-')
+                - CHANGE_SET_TYPE=''
+                - TMP_DIR=$(mktemp -d)
+                ## DevOps Stack
+                - STACK_STATUS=$(aws --output text --query 'Stacks[0].StackStatus' cloudformation describe-stacks --stack-name ${STACK_NAME}-devops || echo 'ERROR')
+                - |
+                    [ $STACK_STATUS = 'ERROR' ] && CHANGE_SET_TYPE=CREATE || [ 1 ]
+                    [ $STACK_STATUS = 'CREATE_COMPLETE' ] && CHANGE_SET_TYPE=UPDATE || [ 1 ]
+                    [ $STACK_STATUS = 'UPDATE_COMPLETE' ] && CHANGE_SET_TYPE=UPDATE || [ 1 ]
+                    [ $STACK_STATUS = 'UPDATE_ROLLBACK_COMPLETE' ] && CHANGE_SET_TYPE=UPDATE || [ 1 ]
+                    [ $STACK_STATUS = 'IMPORT_COMPLETE' ] && CHANGE_SET_TYPE=UPDATE || [ 1 ]
+                    [ $STACK_STATUS = 'IMPORT_ROLLBACK_COMPLETE' ] && CHANGE_SET_TYPE=UPDATE || [ 1 ]
+                    [ $STACK_STATUS = 'DELETE_COMPLETE' ] && CHANGE_SET_TYPE=CREATE || [ 1 ]
+                - 'echo "${CHANGE_SET_TYPE} Change Set (${CHANGE_SET_NAME}) for ${STACK_NAME}-devops with stack status: ${STACK_STATUS}"'
+                - '[ ! -z $CHANGE_SET_TYPE ]'
+                - |
+                    jq --raw-output \
+                      'map(
+                          select(
+                            .ParameterKey == "GitBranchToBuildFrom"
+                            or .ParameterKey == "PatternToTriggerBuild"
+                            or .ParameterKey == "FileCountThresholdForCacheInvalidations"
+                            or .ParameterKey == "CacheControlForTheme"
+                            or .ParameterKey == "CacheControlForMedia"
+                            or .ParameterKey == "CacheControlDefault"
+                            or .ParameterKey == "CacheControlForIndexHTML"
+                          )
+                        )' \
+                      parameters.json > $TMP_DIR/parameters-devops.json
+                - |
+                    [ -z $SKIP_CHECKSUM ] && aws s3 cp s3://${ARTIFACT_BUCKET}/cloudformation/checksums/${STACK_NAME}/devops.md5sum $TMP_DIR/devops.md5sum \
+                      || echo "No devops.md5sum found. Probably a new CloudFormation template."
+                - |
+                    if md5sum --check --status $TMP_DIR/devops.md5sum; then
+                      echo "No changes detected for devops template and parameters; skipping"
+                    else
+                      aws cloudformation package \
+                        --template-file devops.cfn.yaml \
+                        --s3-bucket $ARTIFACT_BUCKET \
+                        --s3-prefix cloudformation/package-templates/${STACK_NAME} \
+                        --output-template-file $TMP_DIR/devops.cfn.yaml;
+                      aws s3 cp $TMP_DIR/devops.cfn.yaml s3://${ARTIFACT_BUCKET}/cloudformation/package-templates/${STACK_NAME}/
+                      # TODO: use a role for the cloudformation?
+                      #--role-arn $ROLE_ARN \
+                      aws cloudformation create-change-set \
+                        --change-set-name $CHANGE_SET_NAME \
+                        --stack-name ${STACK_NAME}-devops \
+                        --change-set-type $CHANGE_SET_TYPE \
+                        --capabilities CAPABILITY_IAM \
+                        --parameters file://$TMP_DIR/parameters-devops.json \
+                        --template-url "https://${ARTIFACT_BUCKET}.s3-${REGION}.amazonaws.com/cloudformation/package-templates/${STACK_NAME}/devops.cfn.yaml" \
+                        --output text \
+                        --query 'Id' && \
+                        md5sum parameters-devops.json devops.cfn.yaml > $TMP_DIR/devops.md5sum
+                      aws s3 cp $TMP_DIR/devops.md5sum s3://${ARTIFACT_BUCKET}/cloudformation/checksums/${STACK_NAME}/devops.md5sum
+                    fi
+                ## ProjectSlug Stack
+                - CHANGE_SET_TYPE=''
+                - STACK_STATUS=$(aws --output text --query 'Stacks[0].StackStatus' cloudformation describe-stacks --stack-name ${STACK_NAME} || echo 'ERROR')
+                - |
+                    [ $STACK_STATUS = 'ERROR' ] && CHANGE_SET_TYPE=CREATE || [ 1 ]
+                    [ $STACK_STATUS = 'CREATE_COMPLETE' ] && CHANGE_SET_TYPE=UPDATE || [ 1 ]
+                    [ $STACK_STATUS = 'UPDATE_COMPLETE' ] && CHANGE_SET_TYPE=UPDATE || [ 1 ]
+                    [ $STACK_STATUS = 'UPDATE_ROLLBACK_COMPLETE' ] && CHANGE_SET_TYPE=UPDATE || [ 1 ]
+                    [ $STACK_STATUS = 'IMPORT_COMPLETE' ] && CHANGE_SET_TYPE=UPDATE || [ 1 ]
+                    [ $STACK_STATUS = 'IMPORT_ROLLBACK_COMPLETE' ] && CHANGE_SET_TYPE=UPDATE || [ 1 ]
+                    [ $STACK_STATUS = 'DELETE_COMPLETE' ] && CHANGE_SET_TYPE=CREATE || [ 1 ]
+                - 'echo "${CHANGE_SET_TYPE} Change Set (${CHANGE_SET_NAME}) for ${STACK_NAME} with stack status: ${STACK_STATUS}"'
+                - '[ ! -z $CHANGE_SET_TYPE ]'
+                - |
+                    jq --raw-output \
+                      'map(
+                          select(
+                            .ParameterKey == "BlueVersion"
+                            or .ParameterKey == "GreenVersion"
+                            or .ParameterKey == "HostedZoneId"
+                          )
+                        )' \
+                      parameters.json > $TMP_DIR/parameters-${STACK_NAME}.json
+                - |
+                    [ -z $SKIP_CHECKSUM ] && aws s3 cp s3://${ARTIFACT_BUCKET}/cloudformation/checksums/${STACK_NAME}/${STACK_NAME}.md5sum $TMP_DIR/${STACK_NAME}.md5sum \
+                      || echo "No ${STACK_NAME}.md5sum found. Probably a new CloudFormation template."
+                - |
+                    if md5sum --check --status $TMP_DIR/${STACK_NAME}.md5sum; then \
+                      echo "No changes detected for ${STACK_NAME} stack; skipping"
+                    else \
+                      aws cloudformation package \
+                        --template-file ${STACK_NAME}.cfn.yaml \
+                        --s3-bucket $ARTIFACT_BUCKET \
+                        --s3-prefix cloudformation/package-templates/${STACK_NAME} \
+                        --output-template-file $TMP_DIR/${STACK_NAME}.cfn.yaml;
+                      aws s3 cp $TMP_DIR/${STACK_NAME}.cfn.yaml s3://${ARTIFACT_BUCKET}/cloudformation/package-templates/${STACK_NAME}/
+                      # TODO: use a role for the cloudformation?
+                      #--role-arn $ROLE_ARN \
+                      aws cloudformation create-change-set \
+                        --change-set-name $CHANGE_SET_NAME \
+                        --capabilities CAPABILITY_IAM \
+                        --stack-name ${STACK_NAME} \
+                        --change-set-type $CHANGE_SET_TYPE \
+                        --parameters file://$TMP_DIR/parameters-${STACK_NAME}.json \
+                        --template-url "https://${ARTIFACT_BUCKET}.s3-${REGION}.amazonaws.com/cloudformation/package-templates/${STACK_NAME}/${STACK_NAME}.cfn.yaml" \
+                        --output text \
+                        --query 'Id' && \
+                        md5sum parameters-${STACK_NAME}.json ${STACK_NAME}.cfn.yaml > $TMP_DIR/${STACK_NAME}.md5sum
+                      aws s3 cp $TMP_DIR/${STACK_NAME}.md5sum s3://${ARTIFACT_BUCKET}/cloudformation/checksums/${STACK_NAME}/${STACK_NAME}.md5sum
+                    fi

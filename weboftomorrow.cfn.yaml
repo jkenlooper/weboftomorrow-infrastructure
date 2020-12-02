@@ -10,8 +10,14 @@ Metadata:
   Author: Jake Hickenlooper
 
 Parameters:
+
   ProjectSlug:
     Type: String
+    Description: Should not change. See build-change-set.cfn.yaml
+    Default: "weboftomorrow"
+    AllowedValues:
+      - "weboftomorrow"
+
   BlueVersion:
     Type: String
   GreenVersion:
@@ -19,6 +25,9 @@ Parameters:
 
   SecretHeaderString:
     Type: "AWS::SSM::Parameter::Value<String>"
+    Default: "/weboftomorrow/secret-header-string"
+    AllowedValues:
+      - "/weboftomorrow/secret-header-string"
 
   HostedZoneId:
     Type: 'AWS::Route53::HostedZone::Id'
@@ -39,8 +48,7 @@ Resources:
     Properties:
       DistributionConfig:
         Comment: >
-          The origins in the origin group can be swapped when reverting the
-          blue-green deployment.
+          weboftomorrow production blue-green
         DefaultCacheBehavior:
           Compress: true
           TargetOriginId: "blue-green-failover"
@@ -137,7 +145,7 @@ Resources:
       PolicyName: !Sub "${ProjectSlug}-InvalidationPolicy"
       Roles:
         - Fn::ImportValue:
-            "root-S3UpdateWebsiteProductionRoleName"
+            "root-weboftomorrowS3UpdateWebsiteProductionRoleName"
       PolicyDocument:
         Version: "2012-10-17"
         Statement:

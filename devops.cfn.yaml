@@ -2,10 +2,7 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: "AWS::Serverless-2016-10-31"
 
 Description: >
-  This stack is meant to be manually created in the AWS Console by referring to
-  the uploaded template in the ArtifactBucket.  Creates the BuildChangeSet
-  codebuild resource that is used to create a change set from uploaded artifacts
-  in a S3 bucket.
+  Support CI/CD for weboftomorrow.
 
 Metadata:
   Author: Jake Hickenlooper
@@ -14,51 +11,50 @@ Parameters:
 
   ProjectSlug:
     Type: String
-    Description: >
-      A one word name of the project. Used as part of the object key name for
-      uploaded cloudformation templates and parameter JSON files.
-
-      Will be used for root object name in
-      buckets and other places. The Parameter Store in AWS Systems Manager will
-      use this as the prefix (like /weboftomorrow/) for parameters.
+    Description: Should not change. See build-change-set.cfn.yaml
     Default: "weboftomorrow"
-    AllowedPattern: "[a-z0-9]+"
-    MinLength: 3
-    MaxLength: 50
+    AllowedValues:
+      - "weboftomorrow"
 
   GitHubCloneURL:
     Type: "AWS::SSM::Parameter::Value<String>"
     Default: "/weboftomorrow/github-clone-url"
+    AllowedValues:
+      - "/weboftomorrow/github-clone-url"
     Description: >
       The https clone URL for the project.
 
-  ManualVerificationEmail:
-    Type: "AWS::SSM::Parameter::Value<String>"
-    Default: "/weboftomorrow/manual-verification-email"
-    Description: >
-      Email address to send a notification to when the staging site needs to be
-      manually verified.
-
-  GitBranchToBuildFrom:
-    Type: String
-    #Default: "release"
-    #Description: >
-    #  This is the branch that will be checked out when building the static.zip.
-    #  It is also used when running the code build integration spec.
-  PatternToTriggerBuild:
-    Type: String
-    #Default: "^refs/heads/release"
-    #Description: >
-    #  Set the git branch or tags pattern that will trigger a build.
+  #ManualVerificationEmail:
+  #  Type: "AWS::SSM::Parameter::Value<String>"
+  #  Default: "/weboftomorrow/manual-verification-email"
+  #  AllowedValues:
+  #    - "/weboftomorrow/manual-verification-email"
+  #  Description: >
+  #    Email address to send a notification to when the staging site needs to be
+  #    manually verified.
 
   SecretHeaderString:
     Type: "AWS::SSM::Parameter::Value<String>"
     Default: "/weboftomorrow/secret-header-string"
+    AllowedValues:
+      - "/weboftomorrow/secret-header-string"
     Description: >
       Secret string in the Referer header that CloudFront will use when
       accessing files from the S3 bucket. This blocks direct public access of
       the static sites bucket unless the Referer header with this string is
       used.
+
+  GitBranchToBuildFrom:
+    Type: String
+    Default: "release"
+    Description: >
+      This is the branch that will be checked out when building the static.zip.
+      It is also used when running the code build integration spec.
+  PatternToTriggerBuild:
+    Type: String
+    Default: "^refs/heads/release"
+    Description: >
+      Set the git branch or tags pattern that will trigger a build.
 
   FileCountThresholdForCacheInvalidations:
     Type: Number
@@ -80,15 +76,70 @@ Parameters:
 Resources:
   #TODO: do a md5sum of files in cleanup so it will trigger a build when needed
 
-  BuildChangeSet:
+  #TODO: move AmazonCloudWatchEventRole to root stack
+  AmazonCloudWatchEventRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        -
+          PolicyName: !Sub "${ProjectSlug}-cwe-pipeline-execution"
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Effect: Allow
+                Action: codepipeline:StartPipelineExecution
+                Resource: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${StaticPipeline}"
+
+  AmazonCloudWatchEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - 'AWS API Call via CloudTrail'
+        detail:
+          eventSource:
+            - s3.amazonaws.com
+          eventName:
+            - CopyObject
+            - PutObject
+            - CompleteMultipartUpload
+          requestParameters:
+            bucketName:
+              -
+                Fn::ImportValue: "root-ArtifactBucket"
+            key:
+              - !Sub "${ProjectSlug}/StaticBuild/static.zip"
+      Targets:
+        -
+          Arn: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${StaticPipeline}"
+          RoleArn: !GetAtt AmazonCloudWatchEventRole.Arn
+          Id: !Sub "${ProjectSlug}-codepipeline-AppPipeline"
+
+  StaticBuild:
     Type: 'AWS::CodeBuild::Project'
     Properties:
-      Name: !Sub "${ProjectSlug}-BuildChangeSet"
+      Name: "StaticBuild"
       Artifacts:
-        Type: NO_ARTIFACTS
+        Type: S3
+        Location:
+          Fn::ImportValue: "root-ArtifactBucket"
+        Path: !Ref ProjectSlug
       LogsConfig:
         CloudWatchLogs:
-          GroupName: !Sub "${ProjectSlug}-BuildChangeSet"
+          GroupName: !Sub "${ProjectSlug}-StaticBuild"
           Status: ENABLED
       Environment:
         ComputeType: BUILD_GENERAL1_SMALL
@@ -97,206 +148,822 @@ Resources:
         Type: LINUX_CONTAINER
         EnvironmentVariables:
           -
+            Name: GIT_BRANCH
+            Type: PLAINTEXT
+            Value: !Ref GitBranchToBuildFrom
+      QueuedTimeoutInMinutes: 10
+      ServiceRole:
+        Fn::ImportValue: root-weboftomorrowStaticBuildRoleArn
+      Source:
+        Auth:
+          Type: OAUTH
+        # GitCloneDepth set to 0 to support git submodule checkout
+        GitCloneDepth: 0
+        Location: !Ref GitHubCloneURL
+        Type: GITHUB
+      TimeoutInMinutes: 10
+      Triggers:
+        Webhook: true
+        FilterGroups:
+          -
+            -
+              Type: EVENT
+              Pattern: PUSH
+              ExcludeMatchedPattern: false
+            -
+              ExcludeMatchedPattern: false
+              Pattern: !Ref PatternToTriggerBuild
+              Type: HEAD_REF
+
+  StaticPatch:
+    Type: 'AWS::CodeBuild::Project'
+    Properties:
+      Name: !Sub "${ProjectSlug}-StaticPatch"
+      Description: >
+        Directly patch the S3 production files and invalidate any CloudFront
+        cache for files that have changed.
+      ServiceRole:
+        Fn::ImportValue: "root-weboftomorrowS3UpdateWebsiteProductionRoleArn"
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/standard:4.0"
+        ImagePullCredentialsType: CODEBUILD
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          -
+            Name: PROJECT_SLUG
+            Type: PLAINTEXT
+            Value: !Ref ProjectSlug
+          -
+            Name: FILE_COUNT_THRESHOLD_FOR_CACHE_INVALIDATIONS
+            Type: PLAINTEXT
+            Value: !Ref FileCountThresholdForCacheInvalidations
+          -
+            Name: STATIC_SITE_FILES_BUCKET
+            Type: PLAINTEXT
+            Value:
+              Fn::ImportValue: "root-StaticWebsiteBucket"
+          -
+            Name: CACHE_CONTROL_FOR_THEME
+            Type: PLAINTEXT
+            Value: !Ref CacheControlForTheme
+          -
+            Name: CACHE_CONTROL_FOR_MEDIA
+            Type: PLAINTEXT
+            Value: !Ref CacheControlForMedia
+          -
+            Name: CACHE_CONTROL_FOR_INDEX_HTML
+            Type: PLAINTEXT
+            Value: !Ref CacheControlForIndexHTML
+          -
+            Name: CACHE_CONTROL_DEFAULT
+            Type: PLAINTEXT
+            Value: !Ref CacheControlDefault
+          -
             Name: ARTIFACT_BUCKET
             Type: PLAINTEXT
             Value:
               Fn::ImportValue: "root-ArtifactBucket"
           -
-            Name: STACK_NAME
+            Name: CLOUDFRONT_PRODUCTION
             Type: PLAINTEXT
-            Value: !Ref ProjectSlug
-          -
-            Name: REGION
-            Type: PLAINTEXT
-            Value: !Ref "AWS::Region"
+            Value:
+              Fn::ImportValue:
+                Fn::Sub: "${ProjectSlug}-CloudFrontProduction"
+      Artifacts:
+        Type: NO_ARTIFACTS
+      LogsConfig:
+        CloudWatchLogs:
+          GroupName: !Sub "${ProjectSlug}-StaticPatch"
+          Status: ENABLED
       QueuedTimeoutInMinutes: 10
-      ServiceRole:
-        Fn::ImportValue: root-weboftomorrowBuildChangeSetRoleArn
-      TimeoutInMinutes: 10
       Source:
-        Location: !Sub
-          - "${artifactBucket}/cloudformation/source-templates/${ProjectSlug}/"
-          -
-            artifactBucket:
-              Fn::ImportValue: "root-ArtifactBucket"
-        Type: S3
+        Type: NO_SOURCE
         BuildSpec: |
           version: 0.2
           env:
             shell: bash
-            parameter-store:
-              MANUAL_VERIFICATION_EMAIL: /weboftomorrow/manual-verification-email
             variables:
-              ARTIFACT_BUCKET: ""
-              STACK_NAME: ""
-              REGION: ""
+              STATIC_SITE_FILES_BUCKET: ""
           phases:
             build:
               commands:
-                # Not sure if errexit actually does anything in an AWS CodeBuild environment
-                - set -o errexit
-                - TIMESTAMP=$(date "+%F_%H_%M")
+                - aws --version
+                - |
+                    aws s3 cp \
+                      s3://${ARTIFACT_BUCKET}/${PROJECT_SLUG}/StaticBuild/parameters.json \
+                      parameters.json
                 - BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' parameters.json)
                 - GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' parameters.json)
-                - CHANGE_SET_NAME=$(echo "version-bump-${BLUE_VERSION}-to-${GREEN_VERSION}-${TIMESTAMP}" | tr --squeeze-repeats [:punct:] '-')
-                - CHANGE_SET_TYPE=UPDATE
+                - |
+                    aws s3 cp \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION}/ \
+                      current \
+                      --recursive \
+                      --no-progress
+                - cp -r current new
+                - |
+                    (
+                      cd current
+                      find . -type f -print | xargs md5sum > ../current_checksums
+                    )
+                # Get the patch file.
+                - |
+                    aws s3 cp \
+                      s3://${ARTIFACT_BUCKET}/${PROJECT_SLUG}/StaticBuild/static.patch \
+                      static.patch \
+                      --no-progress
+                # Apply the patch locally to the new directory, create the
+                # changed-files.txt by doing a md5sum check.
+                - |
+                    (
+                      cd new
+                      patch --no-backup-if-mismatch --remove-empty-files --force -r - --silent -p1 < ../static.patch
+                      # TODO: Verify that files that have been removed are not added to the changed-files.txt.
+                      md5sum --check --quiet --ignore-missing ../current_checksums 2> /dev/null | sed -E 's#\./(.+): FAILED$#/\1#' > ../changed-files.txt
+                    )
+                # Deploy the new patched green version and make the old green
+                # version the blue version. Use orange to preserve the metadata
+                # like Cache-Control headers.
+                - |
+                    aws s3 sync \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION} \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${BLUE_VERSION} \
+                      --no-progress \
+                      --delete
+                    aws s3 sync \
+                      new/theme \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange/theme \
+                      --cache-control "${CACHE_CONTROL_FOR_THEME}" \
+                      --metadata-directive REPLACE \
+                      --no-progress \
+                      --delete
+                    aws s3 sync \
+                      new/media \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange/media \
+                      --cache-control "${CACHE_CONTROL_FOR_MEDIA}" \
+                      --metadata-directive REPLACE \
+                      --no-progress \
+                      --delete
+                    aws s3 sync \
+                      new \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange \
+                      --cache-control "${CACHE_CONTROL_FOR_INDEX_HTML}" \
+                      --metadata-directive REPLACE \
+                      --exclude "*" \
+                      --include "*/index.html" \
+                      --include "index.html" \
+                      --no-progress \
+                      --delete
+                    aws s3 sync \
+                      new \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange \
+                      --cache-control "${CACHE_CONTROL_DEFAULT}" \
+                      --metadata-directive REPLACE \
+                      --exclude "theme" \
+                      --exclude "media" \
+                      --exclude "*/index.html" \
+                      --exclude "index.html" \
+                      --no-progress \
+                      --delete
+                    aws s3 sync \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION} \
+                      --no-progress \
+                      --delete
+                # Create the invalidations for this deployment (skip if no
+                # changed files).
+                # TODO: Don't rely on cache invalidation for deployments.
+                # Only root files which rarely change and can't have cache-busting URLs should rely
+                # on cache invalidations. These would be favicon.ico,
+                # robots.txt, humans.txt and such.
+                - |
+                    CHANGED_FILE_COUNT=$(wc -l changed-files.txt | cut -d ' ' -f1)
+                    if [ $CHANGED_FILE_COUNT -gt $FILE_COUNT_THRESHOLD_FOR_CACHE_INVALIDATIONS ]; then
+                      echo "Changed file count of $CHANGED_FILE_COUNT has passed the $FILE_COUNT_THRESHOLD_FOR_CACHE_INVALIDATIONS threshold; invalidating all paths (/*)"
+                      head -n100 changed-files.txt
+                      if [ $CHANGED_FILE_COUNT -gt 100 ]; then
+                        echo "...plus $(($CHANGED_FILE_COUNT - 100)) more files."
+                      fi
+                      echo "Skipping the actual call to create invalidation"
+                      #aws cloudfront create-invalidation \
+                      #  --distribution-id $CLOUDFRONT_PRODUCTION \
+                      #  --paths '/*';
+                    elif [ $CHANGED_FILE_COUNT -eq 0 ]; then
+                      echo "No changed files. Skipping cache invalidation creation."
+                    else
+                      echo "Creating a cache invalidation for the below files:"
+                      cat changed-files.txt
+                      jq --raw-input --null-input --raw-output \
+                        --arg caller_reference $CODEBUILD_BUILD_ID \
+                        --arg file_count $CHANGED_FILE_COUNT \
+                        '[inputs] | {
+                          CallerReference: $caller_reference,
+                          Paths: {
+                            Quantity: $file_count | tonumber,
+                            Items: .
+                          }
+                        }' changed-files.txt > invalidations.json
+                      echo "Skipping the actual call to create invalidation"
+                      #aws cloudfront create-invalidation \
+                      #  --distribution-id $CLOUDFRONT_PRODUCTION \
+                      #  --invalidation-batch file://invalidations.json
+                    fi
+      TimeoutInMinutes: 10
+
+  #TODO: move StaticTestRole to root stack?
+  StaticTestRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+              - codebuild.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      #TODO: don't specify a RoleName; then will no longer need CAPABILITY_NAMED_IAM
+      #RoleName: !Sub "${ProjectSlug}-StaticTestRole"
+
+  #TODO: move StaticTestPolicy to root stack?
+  StaticTestPolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: !Sub "${ProjectSlug}-StaticTestPolicy"
+      Roles:
+        - !Ref StaticTestRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: Allow
+            Action:
+              - "logs:CreateLogStream"
+              - "logs:CreateLogGroup"
+              - "logs:PutLogEvents"
+            Resource:
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-StaticTest:log-stream:*"
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-StaticTest"
+
+  StaticTest:
+    Type: 'AWS::CodeBuild::Project'
+    Properties:
+      Name: !Sub "${ProjectSlug}-StaticTest"
+      ServiceRole: !GetAtt StaticTestRole.Arn
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/standard:4.0"
+        ImagePullCredentialsType: CODEBUILD
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          -
+            Name: STAGING_URL
+            Type: PLAINTEXT
+            Value: !Sub "http://${CloudFrontStaging.DomainName}"
+          -
+            Name: GIT_BRANCH
+            Type: PLAINTEXT
+            Value: !Ref GitBranchToBuildFrom
+      Artifacts:
+        Type: CODEPIPELINE
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec-integration.yml
+      TimeoutInMinutes: 10
+      QueuedTimeoutInMinutes: 10
+      LogsConfig:
+        CloudWatchLogs:
+          GroupName: !Sub "${ProjectSlug}-StaticTest"
+          Status: ENABLED
+
+  SyncGreenToBlue:
+    Type: 'AWS::CodeBuild::Project'
+    Properties:
+      Name: !Sub "${ProjectSlug}-SyncGreenToBlue"
+      ServiceRole:
+        Fn::ImportValue: "root-weboftomorrowS3UpdateWebsiteProductionRoleArn"
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/standard:4.0"
+        ImagePullCredentialsType: CODEBUILD
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          -
+            Name: PROJECT_SLUG
+            Type: PLAINTEXT
+            Value: !Ref ProjectSlug
+          -
+            Name: STATIC_SITE_FILES_BUCKET
+            Type: PLAINTEXT
+            Value:
+              Fn::ImportValue: "root-StaticWebsiteBucket"
+      Artifacts:
+        Type: CODEPIPELINE
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          env:
+            shell: bash
+            variables:
+              STATIC_SITE_FILES_BUCKET: ""
+          phases:
+            build:
+              commands:
+                - aws --version
+                - BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' parameters.json)
+                - GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' parameters.json)
+                # Get the old green version if there is one; otherwise use new BLUE_VERSION
+                - >
+                    aws s3 cp \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/GREEN_VERSION \
+                      OG \
+                      || echo "${BLUE_VERSION}" > OG
+                - OLD_GREEN_VERSION=$(cat OG)
+                - echo $OLD_GREEN_VERSION
+                # sync old green version to new blue version (if different)
+                - >
+                    aws s3 sync \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${OLD_GREEN_VERSION} \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${BLUE_VERSION}
+                # sync old green version to new green version (if different)
+                - >
+                    aws s3 sync \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${OLD_GREEN_VERSION} \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION}
+      TimeoutInMinutes: 10
+      QueuedTimeoutInMinutes: 10
+      LogsConfig:
+        CloudWatchLogs:
+          GroupName: !Sub "${ProjectSlug}-SyncGreenToBlue"
+          Status: ENABLED
+
+  DeployGreenVersion:
+    Type: 'AWS::CodeBuild::Project'
+    Properties:
+      Name: !Sub "${ProjectSlug}-DeployGreenVersion"
+      ServiceRole:
+        Fn::ImportValue: "root-weboftomorrowS3UpdateWebsiteProductionRoleArn"
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/standard:4.0"
+        ImagePullCredentialsType: CODEBUILD
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          -
+            Name: PROJECT_SLUG
+            Type: PLAINTEXT
+            Value: !Ref ProjectSlug
+          -
+            Name: FILE_COUNT_THRESHOLD_FOR_CACHE_INVALIDATIONS
+            Type: PLAINTEXT
+            Value: !Ref FileCountThresholdForCacheInvalidations
+          -
+            Name: STATIC_SITE_FILES_BUCKET
+            Type: PLAINTEXT
+            Value:
+              Fn::ImportValue: "root-StaticWebsiteBucket"
+          -
+            Name: CLOUDFRONT_PRODUCTION
+            Type: PLAINTEXT
+            Value:
+              Fn::ImportValue:
+                Fn::Sub: "${ProjectSlug}-CloudFrontProduction"
+          -
+            Name: CACHE_CONTROL_FOR_THEME
+            Type: PLAINTEXT
+            Value: !Ref CacheControlForTheme
+          -
+            Name: CACHE_CONTROL_FOR_MEDIA
+            Type: PLAINTEXT
+            Value: !Ref CacheControlForMedia
+          -
+            Name: CACHE_CONTROL_FOR_INDEX_HTML
+            Type: PLAINTEXT
+            Value: !Ref CacheControlForIndexHTML
+          -
+            Name: CACHE_CONTROL_DEFAULT
+            Type: PLAINTEXT
+            Value: !Ref CacheControlDefault
+      Artifacts:
+        Type: CODEPIPELINE
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          env:
+            shell: bash
+            variables:
+              STATIC_SITE_FILES_BUCKET: ""
+          phases:
+            build:
+              commands:
+                - aws --version
+                - BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' parameters.json)
+                - GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' parameters.json)
+                - SOURCE_VERSION=$(jq -r '.version' package.json)
                 - TMP_DIR=$(mktemp -d)
+                # Create the list of changed files by checking the
+                # yellow_checksums file with what is in green version.
                 - |
-                    jq --null-input --raw-output \
-                      --arg manual_verification_email $MANUAL_VERIFICATION_EMAIL \
-                      '[
-                        {
-                          "ParameterKey": "ManualVerificationEmail",
-                          "ParameterValue": $manual_verification_email
-                        }
-                       ]' > $TMP_DIR/parameters.json
-                ## build-change-set (template for ProjectSlug)
-                - >
-                    aws cloudformation describe-stacks \
-                      --stack-name ${STACK_NAME} || CHANGE_SET_TYPE=CREATE
 
-                - 'echo "Change Set for ${STACK_NAME}: ${CHANGE_SET_NAME}" for ${CHANGE_SET_TYPE}'
-
+                    aws s3 cp \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow \
+                      $TMP_DIR/yellow \
+                      --recursive \
+                      --no-progress
+                    (
+                      cd $TMP_DIR/yellow
+                      find . -type f -print | xargs md5sum > $TMP_DIR/yellow_checksums
+                    )
+                    aws s3 cp \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION} \
+                      $TMP_DIR/green \
+                      --recursive \
+                      --no-progress
+                    (
+                      cd $TMP_DIR/green
+                      md5sum --check --quiet --ignore-missing $TMP_DIR/yellow_checksums 2> /dev/null | sed -E 's#(.+): FAILED$#/\1#' > $TMP_DIR/changed-files.txt
+                    )
+                # Sync deployed version to new green version and delete old
+                # existing files in destination if not in source.  Using
+                # a holding directory (orange) to store the metadata and such
+                # after it is synced from yellow. The orange directory is then
+                # synced to the green version in one transaction.
+                # Use max-age of a year on any files in theme directory since
+                # they all have the version as part of the path.
                 - |
-                    jq --raw-output --slurp \
-                      '.[0] as $a1 | .[1] as $a2 | ($a1 + $a2)
-                        | map(
-                          select(
-                            .ParameterKey == "ProjectSlug"
-                            or .ParameterKey == "GitHubCloneURL"
-                            or .ParameterKey == "ManualVerificationEmail"
-                            or .ParameterKey == "GitBranchToBuildFrom"
-                            or .ParameterKey == "PatternToTriggerBuild"
-                            or .ParameterKey == "FileCountThresholdForCacheInvalidations"
-                            or .ParameterKey == "SecretHeaderString"
-                            or .ParameterKey == "CacheControlForTheme"
-                            or .ParameterKey == "CacheControlForMedia"
-                            or .ParameterKey == "CacheControlDefault"
-                            or .ParameterKey == "CacheControlForIndexHTML"
-                          )
-                        )' \
-                      parameters.json $TMP_DIR/parameters.json > $TMP_DIR/parameters-devops.json
-                # Skip creating a package and change set if source template and
-                # generated parameters file has not changed from last time.
-                - >
-                    aws s3 cp s3://${ARTIFACT_BUCKET}/cloudformation/checksums/${STACK_NAME}/devops.md5sum $TMP_DIR/devops.md5sum || echo 'No devops.md5sum found. Probably a new CloudFormation template.'
-                - >
-                    if md5sum --check --status $TMP_DIR/devops.md5sum; then \
-                      echo 'No changes detected for devops template and parameters; skipping'
-                    else \
-                      aws cloudformation package \
-                        --template-file devops.yaml \
-                        --s3-bucket $ARTIFACT_BUCKET \
-                        --s3-prefix cloudformation/package-templates/${STACK_NAME} \
-                        --output-template-file $TMP_DIR/devops.yaml;
-                      aws s3 cp $TMP_DIR/devops.yaml s3://${ARTIFACT_BUCKET}/cloudformation/package-templates/${STACK_NAME}/
-                      #TODO: use --role-arn
-                      # Would need to get the arn of the weboftomorrowCloudFormationRole from the root stack.
-                      # Drop --capabilities CAPABILITY_NAMED_IAM \
-                      aws cloudformation create-change-set \
-                        --change-set-name $CHANGE_SET_NAME \
-                        --stack-name ${STACK_NAME} \
-                        --change-set-type $CHANGE_SET_TYPE \
-                        --parameters file://$TMP_DIR/parameters-devops.json \
-                        --template-url "https://${ARTIFACT_BUCKET}.s3-${REGION}.amazonaws.com/cloudformation/package-templates/${STACK_NAME}/devops.yaml" \
-                        --output text \
-                        --query 'Id' && \
-                        md5sum parameters-devops.json devops.yaml > $TMP_DIR/devops.md5sum
-                      aws s3 cp $TMP_DIR/devops.md5sum s3://${ARTIFACT_BUCKET}/cloudformation/checksums/${STACK_NAME}/devops.md5sum
+                    aws s3 sync \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow/theme \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange/theme \
+                      --cache-control "${CACHE_CONTROL_FOR_THEME}" \
+                      --metadata-directive REPLACE \
+                      --no-progress \
+                      --delete
+                # Use max-age of 20 minutes (average time a visitor might be on
+                # the site) and shared max-age of a year for media files.  The
+                # media/* path will use cache invalidations to refresh. Using
+                # a longer max-age since it is more likely these don't change
+                # often.
+                - |
+                    aws s3 sync \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow/media \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange/media \
+                      --cache-control "${CACHE_CONTROL_FOR_MEDIA}" \
+                      --metadata-directive REPLACE \
+                      --no-progress \
+                      --delete
+                - |
+                    aws s3 sync \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange \
+                      --cache-control "${CACHE_CONTROL_FOR_INDEX_HTML}" \
+                      --metadata-directive REPLACE \
+                      --exclude "*" \
+                      --include "*/index.html" \
+                      --include "index.html" \
+                      --no-progress \
+                      --delete
+                # For all other files which will mostly be index.html files set
+                # the max-age to 5 minutes for visitor cache and shared max-age
+                # to a year. Will use invalidations to refresh.
+                - |
+                    aws s3 sync \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange \
+                      --cache-control "${CACHE_CONTROL_DEFAULT}" \
+                      --metadata-directive REPLACE \
+                      --exclude "theme" \
+                      --exclude "media" \
+                      --exclude "*/index.html" \
+                      --exclude "index.html" \
+                      --no-progress \
+                      --delete
+                # Sync the updated orange to green version
+                - |
+                    aws s3 sync \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/orange \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION} \
+                      --no-progress \
+                      --delete
+                # Create the invalidations for this deployment (skip if no
+                # changed files).
+                - |
+                    CHANGED_FILE_COUNT=$(wc -l $TMP_DIR/changed-files.txt | cut -d ' ' -f1)
+                    if [ $CHANGED_FILE_COUNT -gt $FILE_COUNT_THRESHOLD_FOR_CACHE_INVALIDATIONS ]; then
+                      echo "Changed file count of $CHANGED_FILE_COUNT has passed the $FILE_COUNT_THRESHOLD_FOR_CACHE_INVALIDATIONS threshold; invalidating all paths (/*)"
+                      head -n100 $TMP_DIR/changed-files.txt
+                      if [ $CHANGED_FILE_COUNT -gt 100 ]; then
+                        echo "...plus $(($CHANGED_FILE_COUNT - 100)) more files."
+                      fi
+                      echo "Skipping the actual call to create invalidation"
+                      #aws cloudfront create-invalidation \
+                      #  --distribution-id $CLOUDFRONT_PRODUCTION \
+                      #  --paths '/*';
+                    elif [ $CHANGED_FILE_COUNT -eq 0 ]; then
+                      echo "No changed files. Skipping cache invalidation creation."
+                    else
+                      echo "Creating a cache invalidation for the below files:"
+                      cat $TMP_DIR/changed-files.txt
+                      jq --raw-input --null-input --raw-output \
+                        --arg caller_reference $CODEBUILD_BUILD_ID \
+                        --arg file_count $CHANGED_FILE_COUNT \
+                        '[inputs] | {
+                          CallerReference: $caller_reference,
+                          Paths: {
+                            Quantity: $file_count | tonumber,
+                            Items: .
+                          }
+                        }' $TMP_DIR/changed-files.txt > $TMP_DIR/invalidations.json
+                      echo "Skipping the actual call to create invalidation"
+                      #aws cloudfront create-invalidation \
+                      #  --distribution-id $CLOUDFRONT_PRODUCTION \
+                      #  --invalidation-batch file://$TMP_DIR/invalidations.json
                     fi
-
-                ## pipeline
-                - >
-                    aws cloudformation describe-stacks \
-                      --stack-name ${STACK_NAME}-pipeline || CHANGE_SET_TYPE=CREATE
-
-                - 'echo "Change Set for ${STACK_NAME}-pipeline: ${CHANGE_SET_NAME}" for ${CHANGE_SET_TYPE}'
+                # Update the error.html file that will be used
                 - |
-                    jq --raw-output --slurp \
-                      '.[0] as $a1 | .[1] as $a2 | ($a1 + $a2)
-                        | map(
-                          select(
-                            .ParameterKey == "ProjectSlug"
-                            or .ParameterKey == "GitBranchToBuildFrom"
-                            or .ParameterKey == "PatternToTriggerBuild"
-                            or .ParameterKey == "SecretHeaderString"
-                            or .ParameterKey == "CacheControlForTheme"
-                            or .ParameterKey == "CacheControlForMedia"
-                            or .ParameterKey == "CacheControlDefault"
-                          )
-                        )' \
-                      parameters.json $TMP_DIR/parameter-store.json > parameters-pipeline.json
-                # Skip creating a package and change set if source template and
-                # generated parameters file has not changed from last time.
-                - >
-                    aws s3 cp s3://${ARTIFACT_BUCKET}/cloudformation/checksums/${STACK_NAME}/pipeline.md5sum $TMP_DIR/pipeline.md5sum || echo 'No pipeline.md5sum found. Probably a new CloudFormation template.'
-                - >
-                    if md5sum --check --status $TMP_DIR/pipeline.md5sum; then \
-                      echo 'No changes detected for pipeline stack; skipping'
-                    else \
-                      aws cloudformation package \
-                        --template-file pipeline.yaml \
-                        --s3-bucket $ARTIFACT_BUCKET \
-                        --s3-prefix cloudformation/package-templates/${STACK_NAME} \
-                        --output-template-file $TMP_DIR/pipeline.yaml;
-                      aws s3 cp $TMP_DIR/pipeline.yaml s3://${ARTIFACT_BUCKET}/cloudformation/package-templates/${STACK_NAME}/
-                      #TODO: use --role-arn
-                      # Drop --capabilities CAPABILITY_NAMED_IAM \
-                      aws cloudformation create-change-set \
-                        --change-set-name $CHANGE_SET_NAME \
-                        --stack-name ${STACK_NAME}-pipeline \
-                        --change-set-type $CHANGE_SET_TYPE \
-                        --parameters file://parameters-pipeline.json \
-                        --template-url "https://${ARTIFACT_BUCKET}.s3-${REGION}.amazonaws.com/cloudformation/package-templates/${STACK_NAME}/pipeline.yaml" \
-                        --output text \
-                        --query 'Id' && \
-                        md5sum parameters-pipeline.json pipeline.yaml > $TMP_DIR/pipeline.md5sum
-                      aws s3 cp $TMP_DIR/pipeline.md5sum s3://${ARTIFACT_BUCKET}/cloudformation/checksums/${STACK_NAME}/pipeline.md5sum
-                    fi
-
-                ## static-website
-                - >
-                    aws cloudformation describe-stacks \
-                      --stack-name ${STACK_NAME}-static-website || CHANGE_SET_TYPE=CREATE
-
-                - 'echo "Change Set for ${STACK_NAME}-static-website: ${CHANGE_SET_NAME}" for ${CHANGE_SET_TYPE}'
+                    aws s3 sync \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow/error.html \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/error.html
+                # Set the new green version file for use by future updates
+                - echo "${GREEN_VERSION}" > NG
                 - |
-                    jq --raw-output --slurp \
-                      '.[0] as $a1 | .[1] as $a2 | ($a1 + $a2)
-                        | map(
-                          select(
-                            .ParameterKey == "ProjectSlug"
-                            or .ParameterKey == "BlueVersion"
-                            or .ParameterKey == "GreenVersion"
-                            or .ParameterKey == "SecretHeaderString"
-                            or .ParameterKey == "HostedZoneId"
-                          )
-                        )' \
-                      parameters.json $TMP_DIR/parameter-store.json > parameters-static-website.json
-                # Skip creating a package and change set if source template and
-                # generated parameters file has not changed from last time.
-                - >
-                    aws s3 cp s3://${ARTIFACT_BUCKET}/cloudformation/checksums/${STACK_NAME}/static-website.md5sum $TMP_DIR/static-website.md5sum || echo 'No static-website.md5sum found. Probably a new CloudFormation template.'
-                - >
-                    if md5sum --check --status $TMP_DIR/static-website.md5sum; then \
-                      echo 'No changes detected for static-website stack; skipping'
-                    else \
-                      aws cloudformation package \
-                        --template-file static-website.yaml \
-                        --s3-bucket $ARTIFACT_BUCKET \
-                        --s3-prefix cloudformation/package-templates/${STACK_NAME} \
-                        --output-template-file $TMP_DIR/static-website.yaml;
-                      aws s3 cp $TMP_DIR/static-website.yaml s3://${ARTIFACT_BUCKET}/cloudformation/package-templates/${STACK_NAME}/
-                      #TODO: use --role-arn
-                      # Drop --capabilities CAPABILITY_NAMED_IAM \
-                      aws cloudformation create-change-set \
-                        --change-set-name $CHANGE_SET_NAME \
-                        --stack-name ${STACK_NAME}-static-website \
-                        --change-set-type $CHANGE_SET_TYPE \
-                        --parameters file://parameters-static-website.json \
-                        --template-url "https://${ARTIFACT_BUCKET}.s3-${REGION}.amazonaws.com/cloudformation/package-templates/${STACK_NAME}/static-website.yaml" \
-                        --output text \
-                        --query 'Id' && \
-                        md5sum parameters-static-website.json static-website.yaml > $TMP_DIR/static-website.md5sum
-                      aws s3 cp $TMP_DIR/static-website.md5sum s3://${ARTIFACT_BUCKET}/cloudformation/checksums/${STACK_NAME}/static-website.md5sum
-                    fi
+                  aws s3 cp \
+                    NG \
+                    s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/GREEN_VERSION
+                # Clean up by removing yellow
+                - |
+                    aws s3 rm \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow \
+                      --recursive \
+                      --only-show-errors
+      TimeoutInMinutes: 10
+      QueuedTimeoutInMinutes: 10
+      LogsConfig:
+        CloudWatchLogs:
+          GroupName: !Sub "${ProjectSlug}-DeployGreenVersion"
+          Status: ENABLED
+
+#  ManualVerificationTopic:
+#    Type: AWS::SNS::Topic
+#    Properties:
+#      DisplayName: !Sub "${ProjectSlug}-ManualVerificationTopic"
+#      Subscription:
+#        -
+#          Protocol: email
+#          Endpoint:
+#            Fn::ImportValue: !Sub "${ProjectSlug}-ManualVerificationEmail"
+
+  StaticPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      ArtifactStore:
+        Type: S3
+        Location:
+          Fn::ImportValue: "root-ArtifactBucket"
+      Name: !Sub "tmp-${ProjectSlug}-StaticPipeline"
+      RoleArn:
+        Fn::ImportValue: "root-StaticPipelineRoleArn"
+      Stages:
+        -
+          Name: Source
+          Actions:
+            -
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: S3
+                Version: "1"
+              Configuration:
+                S3Bucket:
+                  Fn::ImportValue: "root-ArtifactBucket"
+                # static.zip here is the GreenVersion
+                S3ObjectKey: !Sub "${ProjectSlug}/StaticBuild/static.zip"
+                PollForSourceChanges: false
+              Name: "StaticBuild-artifact"
+              OutputArtifacts:
+                - Name: staticZip
+              RunOrder: 1
+            -
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: S3
+                Version: "1"
+              Configuration:
+                S3Bucket:
+                  Fn::ImportValue: "root-ArtifactBucket"
+                S3ObjectKey: !Sub "${ProjectSlug}/StaticBuild/source.zip"
+                PollForSourceChanges: false
+              Name: "StaticBuild-artifact-source"
+              OutputArtifacts:
+                - Name: sourceZip
+              RunOrder: 2
+            -
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: S3
+                Version: "1"
+              Configuration:
+                S3Bucket:
+                  Fn::ImportValue: "root-ArtifactBucket"
+                S3ObjectKey: !Sub "${ProjectSlug}/StaticBuild/parameters.json"
+                PollForSourceChanges: false
+              Name: "StaticBuild-artifact-parameters"
+              OutputArtifacts:
+                - Name: parametersJSON
+              RunOrder: 2
+        -
+          Name: Stage
+          Actions:
+            -
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: S3
+                Version: "1"
+              Configuration:
+                BucketName:
+                  Fn::ImportValue: "root-StaticWebsiteBucket"
+                ObjectKey: !Sub "${ProjectSlug}/stage"
+                Extract: true
+              Name: "StaticBuild-stage"
+              InputArtifacts:
+                - Name: staticZip
+              RunOrder: 1
+
+            # TODO: skipping for now
+            #-
+            #  ActionTypeId:
+            #    Category: Test
+            #    Owner: AWS
+            #    Provider: CodeBuild
+            #    Version: "1"
+            #  Configuration:
+            #    ProjectName: !Ref StaticTest
+            #  Name: "StaticTest-stage"
+            #  InputArtifacts:
+            #    - Name: sourceZip
+            #  RunOrder: 2
+        #    -
+        #      ActionTypeId:
+        #        Category: Approval
+        #        Owner: AWS
+        #        Provider: Manual
+        #        Version: "1"
+        #      Configuration:
+        #        CustomData: |
+        #          Review the staging website before pushing change to
+        #          production.
+        #        ExternalEntityLink: !Sub "http://${CloudFrontStaging.DomainName}"
+        #        NotificationArn: !Ref ManualVerificationTopic
+        #      Name: "approval-stage"
+        #      RunOrder: 3
+        -
+          Name: Prep
+          Actions:
+            -
+              Name: "SyncGreenToBlue"
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              InputArtifacts:
+                - Name: sourceZip
+              Configuration:
+                ProjectName: !Ref SyncGreenToBlue
+              RunOrder: 1
+        -
+          Name: Deploy
+          Actions:
+            -
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: S3
+                Version: "1"
+              Configuration:
+                BucketName:
+                  Fn::ImportValue: "root-StaticWebsiteBucket"
+                ObjectKey: !Sub "${ProjectSlug}/production"
+                Extract: true
+              Name: "StaticBuild-deploy"
+              InputArtifacts:
+                - Name: staticZip
+              RunOrder: 1
+            -
+              Name: "StaticBuild-deploy-version"
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              InputArtifacts:
+                - Name: sourceZip
+              Configuration:
+                ProjectName: !Ref DeployGreenVersion
+              RunOrder: 2
+
+        #    #TODO: Invoke a lambda to set custom headers
+        #    # index.html Cache-Control: max-age=0, s-max-age=300
+        #    #
+        #    # media/* and root/* Cache-Control: max-age=0, s-max-age=604800
+        #    #   Deployment will invalidate /media/* path and each file in root/
+        #    #   (/robots.txt, humans.txt, favicon.ico)
+        #    #   Browser clients must revalidate each time
+        #    #
+        #    # theme/* Cache-Control: public, max-age=604800, immutable
+        #    #   Any files in theme have version as part of the path (/theme/0.0.1/*) and
+        #    #   are immutable.
+
+        -
+          Name: Cleanup
+          Actions:
+            -
+              Name: "Cleanup-Lambda"
+              ActionTypeId:
+                Category: Invoke
+                Owner: AWS
+                Provider: Lambda
+                Version: "1"
+              InputArtifacts:
+                - Name: sourceZip
+                - Name: staticZip
+                - Name: parametersJSON
+              Configuration:
+                # TODO set LOGGING_LEVEL to info
+                FunctionName: !Ref CleanupLambda
+                UserParameters: !Sub
+                  - |
+                    {
+                      "StaticSiteFiles": "${bucketName}"
+                    }
+                  -
+                    bucketName:
+                      Fn::ImportValue: "root-StaticWebsiteBucket"
+              RunOrder: 1
+
+  CloudFrontStaging:
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        Comment: >
+          weboftomorrow staging green only
+        DefaultCacheBehavior:
+          Compress: true
+          TargetOriginId: "yellow"
+          # Managed-CachingDisabled
+          CachePolicyId: "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
+          ViewerProtocolPolicy: redirect-to-https
+        DefaultRootObject: index.html
+        Enabled: true
+        PriceClass: PriceClass_100
+        Origins:
+          -
+            Id: "yellow"
+            CustomOriginConfig:
+              # The S3 static website is only accessible via http
+              OriginProtocolPolicy: http-only
+            DomainName: !Sub
+              - "${bucketName}.s3-website-${AWS::Region}.amazonaws.com"
+              -
+                bucketName:
+                  Fn::ImportValue: "root-StaticWebsiteBucket"
+            OriginCustomHeaders:
+              -
+                HeaderName: Referer
+                HeaderValue: !Ref SecretHeaderString
+            OriginPath: !Sub "/${ProjectSlug}/stage/yellow"
+
+  CleanupLambda:
+    Type: "AWS::Serverless::Function"
+    Properties:
+      Description: >
+        Delete old objects in S3 bucket that are no longer needed.
+      Handler: "llama.handler"
+      Runtime: python3.8
+      CodeUri: cleanup/.
+      Role:
+        Fn::ImportValue: "root-weboftomorrowS3UpdateWebsiteProductionRoleArn"
+      Timeout: 5
+
+#  #CleanupLambdaLibs:
+#  #  Type: "AWS::Serverless::LayerVersion"
+#  #  Properties:
+#  #    LayerName: CleanupPythonLayer
+#  #    Description: |
+#  #      Dependencies for the CleanupLambda
+#  #    ContentUri: package/.
+#  #    CompatibleRuntimes:
+#  #      - python3.8
+#Outputs:
+#  # TODO: temporary to get around validation error since not currently using the
+#  # parameter.
+#  tmp:
+#    Value: !Ref SecretHeaderString
