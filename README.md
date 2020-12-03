@@ -11,6 +11,8 @@ _It currently depends on another stack that creates many of the root resources._
 That root stack is mainly used to setup the shared artifact and static website
 buckets as well as many of the roles and other permissions.
 
+![Layout of infrastructure in AWS](/images/weboftomorrow-infrastructure.svg)
+
 ---
 
 **[Change log](CHANGELOG.md)**
