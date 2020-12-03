@@ -24,7 +24,6 @@ Parameters:
     MaxLength: 50
 
 Resources:
-  #TODO: do a md5sum of files in cleanup so it will trigger a build when needed
 
   BuildChangeSet:
     Type: 'AWS::CodeBuild::Project'

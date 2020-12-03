@@ -107,34 +107,6 @@ Resources:
                 HeaderName: Referer
                 HeaderValue: !Ref SecretHeaderString
             OriginPath: !Sub "/${ProjectSlug}/production/${GreenVersion}"
-        #
-        # TODO: cleanup llama should invalidate caches OR max-age should be set
-        # on index.html paths.
-        #CacheBehaviors:
-        #  -
-        #    PathPattern: '*/index.html'
-        #    TargetOriginId: "blue-green-failover"
-        #    ViewerProtocolPolicy: redirect-to-https
-        #    # Managed-CachingDisabled
-        #    CachePolicyId: "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
-        #  -
-        #    PathPattern: '*/'
-        #    TargetOriginId: "blue-green-failover"
-        #    ViewerProtocolPolicy: redirect-to-https
-        #    # Managed-CachingDisabled
-        #    CachePolicyId: "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
-        #  -
-        #    PathPattern: 'index.html'
-        #    TargetOriginId: "blue-green-failover"
-        #    ViewerProtocolPolicy: redirect-to-https
-        #    # Managed-CachingDisabled
-        #    CachePolicyId: "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
-        #  -
-        #    PathPattern: '/'
-        #    TargetOriginId: "blue-green-failover"
-        #    ViewerProtocolPolicy: redirect-to-https
-        #    # Managed-CachingDisabled
-        #    CachePolicyId: "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
 
   #TODO: Create a hosted zone resource?
 

@@ -74,9 +74,7 @@ Parameters:
 
 
 Resources:
-  #TODO: do a md5sum of files in cleanup so it will trigger a build when needed
-
-  #TODO: move AmazonCloudWatchEventRole to root stack
+  #TODO: move AmazonCloudWatchEventRole to root stack?
   AmazonCloudWatchEventRole:
     Type: AWS::IAM::Role
     Properties:
@@ -336,7 +334,7 @@ Resources:
                       --delete
                 # Create the invalidations for this deployment (skip if no
                 # changed files).
-                # TODO: Don't rely on cache invalidation for deployments.
+                # Don't rely on cache invalidation for deployments.
                 # Only root files which rarely change and can't have cache-busting URLs should rely
                 # on cache invalidations. These would be favicon.ico,
                 # robots.txt, humans.txt and such.
@@ -387,8 +385,6 @@ Resources:
             Action:
               - sts:AssumeRole
       Path: /
-      #TODO: don't specify a RoleName; then will no longer need CAPABILITY_NAMED_IAM
-      #RoleName: !Sub "${ProjectSlug}-StaticTestRole"
 
   #TODO: move StaticTestPolicy to root stack?
   StaticTestPolicy:
@@ -872,19 +868,6 @@ Resources:
               Configuration:
                 ProjectName: !Ref DeployGreenVersion
               RunOrder: 2
-
-        #    #TODO: Invoke a lambda to set custom headers
-        #    # index.html Cache-Control: max-age=0, s-max-age=300
-        #    #
-        #    # media/* and root/* Cache-Control: max-age=0, s-max-age=604800
-        #    #   Deployment will invalidate /media/* path and each file in root/
-        #    #   (/robots.txt, humans.txt, favicon.ico)
-        #    #   Browser clients must revalidate each time
-        #    #
-        #    # theme/* Cache-Control: public, max-age=604800, immutable
-        #    #   Any files in theme have version as part of the path (/theme/0.0.1/*) and
-        #    #   are immutable.
-
         -
           Name: Cleanup
           Actions:
@@ -965,8 +948,3 @@ Resources:
 #  #    ContentUri: package/.
 #  #    CompatibleRuntimes:
 #  #      - python3.8
-#Outputs:
-#  # TODO: temporary to get around validation error since not currently using the
-#  # parameter.
-#  tmp:
-#    Value: !Ref SecretHeaderString
