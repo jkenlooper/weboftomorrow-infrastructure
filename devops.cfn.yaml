@@ -265,7 +265,10 @@ Resources:
                 - |
                     (
                       cd current
-                      find . -type f -print | xargs md5sum > ../current_checksums
+                      # Limit to just files that will rely on cache
+                      # invalidations.  This will exclude theme, media, and any
+                      # index.html files.
+                      find ./* -maxdepth 0 ! -path ./media ! -path ./theme | xargs -I {} find {} -type f ! -name index.html | xargs md5sum > ../current_checksums
                     )
                 # Get the patch file.
                 - |
@@ -345,10 +348,9 @@ Resources:
                       if [ $CHANGED_FILE_COUNT -gt 100 ]; then
                         echo "...plus $(($CHANGED_FILE_COUNT - 100)) more files."
                       fi
-                      echo "Skipping the actual call to create invalidation"
-                      #aws cloudfront create-invalidation \
-                      #  --distribution-id $CLOUDFRONT_PRODUCTION \
-                      #  --paths '/*';
+                      aws cloudfront create-invalidation \
+                        --distribution-id $CLOUDFRONT_PRODUCTION \
+                        --paths '/*';
                     elif [ $CHANGED_FILE_COUNT -eq 0 ]; then
                       echo "No changed files. Skipping cache invalidation creation."
                     else
@@ -364,10 +366,9 @@ Resources:
                             Items: .
                           }
                         }' changed-files.txt > invalidations.json
-                      echo "Skipping the actual call to create invalidation"
-                      #aws cloudfront create-invalidation \
-                      #  --distribution-id $CLOUDFRONT_PRODUCTION \
-                      #  --invalidation-batch file://invalidations.json
+                      aws cloudfront create-invalidation \
+                        --distribution-id $CLOUDFRONT_PRODUCTION \
+                        --invalidation-batch file://invalidations.json
                     fi
       TimeoutInMinutes: 10
 
@@ -578,7 +579,11 @@ Resources:
                       --no-progress
                     (
                       cd $TMP_DIR/yellow
-                      find . -type f -print | xargs md5sum > $TMP_DIR/yellow_checksums
+                      # Limit to just files that will rely on cache
+                      # invalidations.  This will exclude theme, media, and any
+                      # index.html files.
+                      find ./* -maxdepth 0 ! -path ./media ! -path ./theme | xargs -I {} find {} -type f ! -name index.html | xargs md5sum > $TMP_DIR/yellow_checksums
+
                     )
                     aws s3 cp \
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION} \
@@ -660,10 +665,9 @@ Resources:
                       if [ $CHANGED_FILE_COUNT -gt 100 ]; then
                         echo "...plus $(($CHANGED_FILE_COUNT - 100)) more files."
                       fi
-                      echo "Skipping the actual call to create invalidation"
-                      #aws cloudfront create-invalidation \
-                      #  --distribution-id $CLOUDFRONT_PRODUCTION \
-                      #  --paths '/*';
+                      aws cloudfront create-invalidation \
+                        --distribution-id $CLOUDFRONT_PRODUCTION \
+                        --paths '/*';
                     elif [ $CHANGED_FILE_COUNT -eq 0 ]; then
                       echo "No changed files. Skipping cache invalidation creation."
                     else
@@ -679,10 +683,9 @@ Resources:
                             Items: .
                           }
                         }' $TMP_DIR/changed-files.txt > $TMP_DIR/invalidations.json
-                      echo "Skipping the actual call to create invalidation"
-                      #aws cloudfront create-invalidation \
-                      #  --distribution-id $CLOUDFRONT_PRODUCTION \
-                      #  --invalidation-batch file://$TMP_DIR/invalidations.json
+                      aws cloudfront create-invalidation \
+                        --distribution-id $CLOUDFRONT_PRODUCTION \
+                        --invalidation-batch file://$TMP_DIR/invalidations.json
                     fi
                 # Update the error.html file that will be used
                 - |
