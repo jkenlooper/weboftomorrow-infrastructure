@@ -24,14 +24,14 @@ Parameters:
     Description: >
       The https clone URL for the project.
 
-  #ManualVerificationEmail:
-  #  Type: "AWS::SSM::Parameter::Value<String>"
-  #  Default: "/weboftomorrow/manual-verification-email"
-  #  AllowedValues:
-  #    - "/weboftomorrow/manual-verification-email"
-  #  Description: >
-  #    Email address to send a notification to when the staging site needs to be
-  #    manually verified.
+  ManualVerificationEmail:
+    Type: "AWS::SSM::Parameter::Value<String>"
+    Default: "/weboftomorrow/manual-verification-email"
+    AllowedValues:
+      - "/weboftomorrow/manual-verification-email"
+    Description: >
+      Email address to send a notification to when the staging site needs to be
+      manually verified.
 
   SecretHeaderString:
     Type: "AWS::SSM::Parameter::Value<String>"
@@ -370,47 +370,12 @@ Resources:
                     fi
       TimeoutInMinutes: 10
 
-  #TODO: move StaticTestRole to root stack?
-  StaticTestRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          -
-            Effect: Allow
-            Principal:
-              Service:
-              - codebuild.amazonaws.com
-            Action:
-              - sts:AssumeRole
-      Path: /
-
-  #TODO: move StaticTestPolicy to root stack?
-  StaticTestPolicy:
-    Type: "AWS::IAM::Policy"
-    Properties:
-      PolicyName: !Sub "${ProjectSlug}-StaticTestPolicy"
-      Roles:
-        - !Ref StaticTestRole
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          -
-            Effect: Allow
-            Action:
-              - "logs:CreateLogStream"
-              - "logs:CreateLogGroup"
-              - "logs:PutLogEvents"
-            Resource:
-              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-StaticTest:log-stream:*"
-              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-StaticTest"
-
   StaticTest:
     Type: 'AWS::CodeBuild::Project'
     Properties:
       Name: !Sub "${ProjectSlug}-StaticTest"
-      ServiceRole: !GetAtt StaticTestRole.Arn
+      ServiceRole:
+        Fn::ImportValue: "root-weboftomorrowStaticTestRoleArn"
       Environment:
         ComputeType: BUILD_GENERAL1_SMALL
         Image: "aws/codebuild/standard:4.0"
@@ -707,15 +672,14 @@ Resources:
           GroupName: !Sub "${ProjectSlug}-DeployGreenVersion"
           Status: ENABLED
 
-#  ManualVerificationTopic:
-#    Type: AWS::SNS::Topic
-#    Properties:
-#      DisplayName: !Sub "${ProjectSlug}-ManualVerificationTopic"
-#      Subscription:
-#        -
-#          Protocol: email
-#          Endpoint:
-#            Fn::ImportValue: !Sub "${ProjectSlug}-ManualVerificationEmail"
+  ManualVerificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      #DisplayName: !Sub "${ProjectSlug}-ManualVerificationTopic"
+      Subscription:
+        -
+          Protocol: email
+          Endpoint: !Ref ManualVerificationEmail
 
   StaticPipeline:
     Type: AWS::CodePipeline::Pipeline
@@ -795,34 +759,32 @@ Resources:
               InputArtifacts:
                 - Name: staticZip
               RunOrder: 1
-
-            # TODO: skipping for now
-            #-
-            #  ActionTypeId:
-            #    Category: Test
-            #    Owner: AWS
-            #    Provider: CodeBuild
-            #    Version: "1"
-            #  Configuration:
-            #    ProjectName: !Ref StaticTest
-            #  Name: "StaticTest-stage"
-            #  InputArtifacts:
-            #    - Name: sourceZip
-            #  RunOrder: 2
-        #    -
-        #      ActionTypeId:
-        #        Category: Approval
-        #        Owner: AWS
-        #        Provider: Manual
-        #        Version: "1"
-        #      Configuration:
-        #        CustomData: |
-        #          Review the staging website before pushing change to
-        #          production.
-        #        ExternalEntityLink: !Sub "http://${CloudFrontStaging.DomainName}"
-        #        NotificationArn: !Ref ManualVerificationTopic
-        #      Name: "approval-stage"
-        #      RunOrder: 3
+            -
+              ActionTypeId:
+                Category: Test
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref StaticTest
+              Name: "StaticTest-stage"
+              InputArtifacts:
+                - Name: sourceZip
+              RunOrder: 2
+            -
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: "1"
+              Configuration:
+                CustomData: |
+                  Review the staging website before pushing change to
+                  production.
+                ExternalEntityLink: !Sub "https://${CloudFrontStaging.DomainName}"
+                NotificationArn: !Ref ManualVerificationTopic
+              Name: "approval-stage"
+              RunOrder: 3
         -
           Name: Prep
           Actions:
