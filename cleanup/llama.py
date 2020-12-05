@@ -129,7 +129,7 @@ def handler(event, context):
 
         logger.debug(f"user parameters: {user_params}")
 
-        production_prefix = '{ProjectSlug}/production/'.format(**source_params)
+        production_prefix = '{ProjectSlug}/production/'.format(**user_params)
         keys = list_objects_at_prefix(s3, user_params["StaticSiteFiles"], production_prefix)
         prefix_to_delete = find_prefix_not_in_set(production_prefix, set(['GREEN_VERSION', 'orange', source_params.get('BlueVersion'), source_params.get('GreenVersion')]), keys)
         for old_prefix in prefix_to_delete:

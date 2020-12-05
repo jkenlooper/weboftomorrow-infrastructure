@@ -420,7 +420,7 @@ Resources:
           -
             Name: STAGING_URL
             Type: PLAINTEXT
-            Value: !Sub "http://${CloudFrontStaging.DomainName}"
+            Value: !Sub "https://${CloudFrontStaging.DomainName}"
           -
             Name: GIT_BRANCH
             Type: PLAINTEXT
@@ -888,7 +888,8 @@ Resources:
                 UserParameters: !Sub
                   - |
                     {
-                      "StaticSiteFiles": "${bucketName}"
+                      "StaticSiteFiles": "${bucketName}",
+                      "ProjectSlug": "${ProjectSlug}"
                     }
                   -
                     bucketName:
