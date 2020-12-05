@@ -265,8 +265,8 @@ Resources:
                       cd current
                       # Limit to just files that will rely on cache
                       # invalidations.  This will exclude theme, media, and any
-                      # index.html files.
-                      find ./* -maxdepth 0 ! -path ./media ! -path ./theme | xargs -I {} find {} -type f ! -name index.html | xargs md5sum > ../current_checksums
+                      # index.html, notfound.html, error.html, and maintenance.html files.
+                      find ./* -maxdepth 0 ! -path ./media ! -path ./theme | xargs -I {} find {} -type f ! -name notfound.html ! -name error.html ! -name maintenance.html ! -name index.html | xargs md5sum > ../current_checksums
                     )
                 # Get the patch file.
                 - |
@@ -314,6 +314,9 @@ Resources:
                       --exclude "*" \
                       --include "*/index.html" \
                       --include "index.html" \
+                      --include "notfound.html" \
+                      --include "error.html" \
+                      --include "maintenance.html" \
                       --no-progress \
                       --delete
                     aws s3 sync \
@@ -325,6 +328,9 @@ Resources:
                       --exclude "media" \
                       --exclude "*/index.html" \
                       --exclude "index.html" \
+                      --exclude "notfound.html" \
+                      --exclude "error.html" \
+                      --exclude "maintenance.html" \
                       --no-progress \
                       --delete
                     aws s3 sync \
@@ -368,6 +374,26 @@ Resources:
                         --distribution-id $CLOUDFRONT_PRODUCTION \
                         --invalidation-batch file://invalidations.json
                     fi
+                # Update the maintenance.html, notfound.html, and error.html
+                # file that will be used. Copies from green to blue since the
+                # blue-green-failover will use the blue version for missing
+                # paths.
+                - |
+                    aws s3 cp \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION}/error.html \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${BLUE_VERSION}/error.html
+                    aws s3 cp \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION}/notfound.html \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${BLUE_VERSION}/notfound.html
+                    aws s3 cp \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION}/maintenance.html \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${BLUE_VERSION}/maintenance.html
+                # Set the new green version file for use by future updates
+                - echo "${GREEN_VERSION}" > NG
+                - |
+                  aws s3 cp \
+                    NG \
+                    s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/GREEN_VERSION
       TimeoutInMinutes: 10
 
   StaticTest:
@@ -542,8 +568,8 @@ Resources:
                       cd $TMP_DIR/yellow
                       # Limit to just files that will rely on cache
                       # invalidations.  This will exclude theme, media, and any
-                      # index.html files.
-                      find ./* -maxdepth 0 ! -path ./media ! -path ./theme | xargs -I {} find {} -type f ! -name index.html | xargs md5sum > $TMP_DIR/yellow_checksums
+                      # index.html, notfound.html, error.html, and maintenance.html files.
+                      find ./* -maxdepth 0 ! -path ./media ! -path ./theme | xargs -I {} find {} -type f ! -name notfound.html ! -name error.html ! -name maintenance.html ! -name index.html | xargs md5sum > ../current_checksums
 
                     )
                     aws s3 cp \
@@ -592,6 +618,9 @@ Resources:
                       --exclude "*" \
                       --include "*/index.html" \
                       --include "index.html" \
+                      --include "notfound.html" \
+                      --include "error.html" \
+                      --include "maintenance.html" \
                       --no-progress \
                       --delete
                 # For all other files which will mostly be index.html files set
@@ -607,6 +636,9 @@ Resources:
                       --exclude "media" \
                       --exclude "*/index.html" \
                       --exclude "index.html" \
+                      --exclude "notfound.html" \
+                      --exclude "error.html" \
+                      --exclude "maintenance.html" \
                       --no-progress \
                       --delete
                 # Sync the updated orange to green version
@@ -648,11 +680,20 @@ Resources:
                         --distribution-id $CLOUDFRONT_PRODUCTION \
                         --invalidation-batch file://$TMP_DIR/invalidations.json
                     fi
-                # Update the error.html file that will be used
+                # Update the maintenance.html, notfound.html, and error.html
+                # file that will be used. Copies from green to blue since the
+                # blue-green-failover will use the blue version for missing
+                # paths.
                 - |
-                    aws s3 sync \
-                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/yellow/error.html \
-                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/error.html
+                    aws s3 cp \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION}/error.html \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${BLUE_VERSION}/error.html
+                    aws s3 cp \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION}/notfound.html \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${BLUE_VERSION}/notfound.html
+                    aws s3 cp \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION}/maintenance.html \
+                      s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${BLUE_VERSION}/maintenance.html
                 # Set the new green version file for use by future updates
                 - echo "${GREEN_VERSION}" > NG
                 - |
