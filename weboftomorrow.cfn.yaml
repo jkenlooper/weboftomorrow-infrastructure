@@ -39,6 +39,11 @@ Parameters:
       - Z2FDTNDATAQYW2
     Description: Z2FDTNDATAQYW2 is the hosted zone id of cloudfront domain name.
 
+  CertificateArn:
+    Type: String
+    Description: See parameter in build-change-set CloudFormation template.
+    AllowedPattern: "arn:aws:acm:us-east-1:[0-9]+:certificate/.+"
+
 Resources:
 
   CloudFrontProduction:
@@ -47,6 +52,13 @@ Resources:
     UpdateReplacePolicy: Retain
     Properties:
       DistributionConfig:
+        Aliases:
+          - "weboftomorrow.com"
+          - "www.weboftomorrow.com"
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CertificateArn
+          MinimumProtocolVersion: "TLSv1.2_2019"
+          SslSupportMethod: sni-only
         Comment: >
           weboftomorrow production blue-green
         DefaultCacheBehavior:
@@ -127,7 +139,6 @@ Resources:
             CustomOriginConfig:
               # The S3 static website is only accessible via http
               OriginProtocolPolicy: http-only
-            #DomainName: !Select [1, !Split ["://", !GetAtt StaticSiteFiles.WebsiteURL]]
             DomainName: !Select
               - 1
               - !Split

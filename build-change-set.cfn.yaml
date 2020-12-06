@@ -23,6 +23,14 @@ Parameters:
     MinLength: 3
     MaxLength: 50
 
+  CertificateArn:
+    Type: String
+    Description: >
+      Create a certificate in Amazon Certificate Manager for the domain names
+      weboftomorrow.com and www.weboftomorrow.com. It will need to be in the
+      us-east-1 region so CloudFront can use it.
+    AllowedPattern: "arn:aws:acm:us-east-1:[0-9]+:certificate/.+"
+
 Resources:
 
   BuildChangeSet:
@@ -59,6 +67,10 @@ Resources:
             Type: PLAINTEXT
             Value:
               Fn::ImportValue: "root-weboftomorrowCloudFormationRoleArn"
+          -
+            Name: CERTIFICATE_ARN
+            Type: PLAINTEXT
+            Value: !Ref CertificateArn
       QueuedTimeoutInMinutes: 10
       ServiceRole:
         Fn::ImportValue: root-weboftomorrowBuildChangeSetRoleArn
@@ -155,15 +167,25 @@ Resources:
                 - 'echo "${CHANGE_SET_TYPE} Change Set (${CHANGE_SET_NAME}) for ${STACK_NAME} with stack status: ${STACK_STATUS}"'
                 - '[ ! -z $CHANGE_SET_TYPE ]'
                 - |
-                    jq --raw-output \
-                      'map(
+                    jq --null-input --raw-output \
+                      --arg certificate_arn $CERTIFICATE_ARN \
+                      '[
+                        {
+                          "ParameterKey": "CertificateArn",
+                          "ParameterValue": $certificate_arn
+                        }
+                       ]' > $TMP_DIR/other-parameters.json
+                    jq --raw-output --slurp \
+                      '.[0] as $a1 | .[1] as $a2 | ($a1 + $a2)
+                        | map(
                           select(
                             .ParameterKey == "BlueVersion"
                             or .ParameterKey == "GreenVersion"
                             or .ParameterKey == "HostedZoneId"
+                            or .ParameterKey == "CertificateArn"
                           )
                         )' \
-                      parameters.json > $TMP_DIR/parameters-${STACK_NAME}.json
+                      parameters.json $TMP_DIR/other-parameters.json > $TMP_DIR/parameters-${STACK_NAME}.json
                 - |
                     [ -z $SKIP_CHECKSUM ] && aws s3 cp s3://${ARTIFACT_BUCKET}/cloudformation/checksums/${STACK_NAME}/${STACK_NAME}.md5sum $TMP_DIR/${STACK_NAME}.md5sum \
                       || echo "No ${STACK_NAME}.md5sum found. Probably a new CloudFormation template."
