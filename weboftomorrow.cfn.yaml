@@ -101,6 +101,12 @@ Resources:
             ResponsePagePath: "/maintenance.html"
         Enabled: true
         PriceClass: PriceClass_All
+        # TODO: Enable logging requests on the distribution. Will need a bucket
+        # configured for storing access logs.
+        #Logging:
+        #  Bucket: a-logging-bucket.s3.amazonaws.com
+        #  IncludeCookies: false
+        #  Prefix: !Sub "${ProjectSlug}/production/"
         OriginGroups:
           Items:
             -
