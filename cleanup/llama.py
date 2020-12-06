@@ -3,11 +3,12 @@ import json
 import logging
 import boto3
 
-# TODO:
-#   Any files in the sourceZip root should have invalidations.
-
 logger = logging.getLogger()
-logger.setLevel(os.environ.get("LOGGING_LEVEL", logging.DEBUG))
+try:
+    logger.setLevel(getattr(logging, os.environ.get("LOGGING_LEVEL", "DEBUG")))
+except Exception as err:
+    logger.setLevel(logging.DEBUG)
+    logger.warn(err)
 
 
 def get_user_params(job_data):
@@ -42,7 +43,7 @@ def get_source_params(s3, job_data):
     return dict(map(lambda x: [x["ParameterKey"], x["ParameterValue"]], parameters))
 
 def put_job_success(codepipeline, job_id, message):
-    logger.debug(message)
+    logger.info(message)
     try:
         codepipeline.put_job_success_result(
             jobId=job_id)
@@ -100,7 +101,7 @@ def delete_files(s3, bucket_name, prefix, continuation_token=None):
         }
     )
     if response['ResponseMetadata']['HTTPStatusCode'] != 200:
-        logger.error('failed. {response}')
+        logger.error(f"failed. {response}")
         put_job_failure(codepipeline, job_id, f"Failed to delete files. {response}")
     if list_objects_response.get('IsTruncated'):
         logger.info("More than 1000 objects to delete. Deleting next chunk.")
@@ -123,11 +124,10 @@ def handler(event, context):
 
         user_params = get_user_params(job_data)
 
-        # TODO: get the input artifact for the parametersJSON
         source_params = get_source_params(s3, job_data)
-        logger.debug(f"source parameters: {source_params}")
+        logger.info(f"source parameters: {source_params}")
 
-        logger.debug(f"user parameters: {user_params}")
+        logger.info(f"user parameters: {user_params}")
 
         production_prefix = '{ProjectSlug}/production/'.format(**user_params)
         keys = list_objects_at_prefix(s3, user_params["StaticSiteFiles"], production_prefix)

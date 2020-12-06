@@ -72,6 +72,13 @@ Parameters:
     Type: String
     Default: "max-age=300, s-maxage=31536000"
 
+  LoggingLevel:
+    Type: String
+    Default: "INFO"
+    AllowedValues:
+      - "DEBUG"
+      - "INFO"
+      - "WARNING"
 
 Resources:
   #TODO: move AmazonCloudWatchEventRole to root stack?
@@ -886,7 +893,6 @@ Resources:
                 - Name: staticZip
                 - Name: parametersJSON
               Configuration:
-                # TODO set LOGGING_LEVEL to info
                 FunctionName: !Ref CleanupLambda
                 UserParameters: !Sub
                   - |
@@ -942,13 +948,17 @@ Resources:
       Role:
         Fn::ImportValue: "root-weboftomorrowS3UpdateWebsiteProductionRoleArn"
       Timeout: 5
+      Environment:
+        Variables:
+          LOGGING_LEVEL: !Ref LoggingLevel
 
-#  #CleanupLambdaLibs:
-#  #  Type: "AWS::Serverless::LayerVersion"
-#  #  Properties:
-#  #    LayerName: CleanupPythonLayer
-#  #    Description: |
-#  #      Dependencies for the CleanupLambda
-#  #    ContentUri: package/.
-#  #    CompatibleRuntimes:
-#  #      - python3.8
+  # When the CleanupLambda cleanup/requirements.txt has any actual dependencies listed.
+  #CleanupLambdaLibs:
+  #  Type: "AWS::Serverless::LayerVersion"
+  #  Properties:
+  #    LayerName: CleanupPythonLayer
+  #    Description: |
+  #      Dependencies for the CleanupLambda
+  #    ContentUri: package/.
+  #    CompatibleRuntimes:
+  #      - python3.8
