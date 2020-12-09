@@ -735,8 +735,8 @@ Resources:
       ArtifactStore:
         Type: S3
         Location:
-          Fn::ImportValue: "root-ArtifactBucket"
-      Name: !Sub "tmp-${ProjectSlug}-StaticPipeline"
+          Fn::ImportValue: "root-PipelineBucket"
+      Name: !Ref ProjectSlug
       RoleArn:
         Fn::ImportValue: "root-StaticPipelineRoleArn"
       Stages:
