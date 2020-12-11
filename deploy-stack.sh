@@ -13,7 +13,7 @@ REGION=$(aws configure get region --profile $AWSCONFIG_PROFILE)
 
 STACK_NAME=weboftomorrow
 # only a-z A-Z 0-9
-CF_TEMPLATES="build-change-set.cfn.yaml devops.cfn.yaml $STACK_NAME.cfn.yaml"
+CF_TEMPLATES="build-change-set.cfn.yaml security.cfn.yaml devops.cfn.yaml $STACK_NAME.cfn.yaml"
 
 handle_no_build_change_set_error() {
   echo "Failed to start the build for ${STACK_NAME}-BuildChangeSet. Does it exist?"
@@ -34,6 +34,11 @@ for item in $CF_TEMPLATES; do
   aws --profile $AWSCONFIG_PROFILE s3 cp $item "s3://${ARTIFACT_BUCKET}/cloudformation/source-templates/${STACK_NAME}/"
 done
 aws --profile $AWSCONFIG_PROFILE s3 cp cleanup "s3://${ARTIFACT_BUCKET}/cloudformation/source-templates/${STACK_NAME}/cleanup/" --recursive
+
+# Assuming that the artifact bucket is in the same region.
+for item in $CF_TEMPLATES; do
+echo "https://${ARTIFACT_BUCKET}.s3-${REGION}.amazonaws.com/cloudformation/source-templates/${STACK_NAME}/$item"
+done
 
 # Trigger the codebuild for weboftomorrow-BuildChangeSet
 aws --profile $AWSCONFIG_PROFILE \

@@ -1,0 +1,129 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+  Set Roles and Policies for weboftomorrow stack.
+
+Metadata:
+  Author: Jake Hickenlooper
+
+Parameters:
+  ProjectSlug:
+    Type: "String"
+    Description: Should not change. See build-change-set.cfn.yaml
+    Default: "weboftomorrow"
+    AllowedValues:
+      - "weboftomorrow"
+
+Resources:
+
+  StaticPipelineManagedPolicy:
+    Type: "AWS::IAM::ManagedPolicy"
+    Properties:
+      Roles:
+        - Fn::ImportValue:
+            !Sub "root-${ProjectSlug}StaticPipelineRole"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: Allow
+            Action:
+              - "s3:GetObject"
+              - "s3:PutObject"
+            Resource:
+              - !Sub
+                - "${pipelinebucketarn}/*"
+                -
+                  pipelinebucketarn:
+                    Fn::ImportValue: "root-PipelineBucketArn"
+          -
+            Action:
+              - cloudwatch:*
+            Resource: "*"
+            Effect: Allow
+          -
+            Action:
+              - codebuild:BatchGetBuilds
+              - codebuild:StartBuild
+              - codebuild:BatchGetBuildBatches
+              - codebuild:StartBuildBatch
+            Resource: "*"
+            Effect: Allow
+          -
+            Effect: Allow
+            Action:
+              - "logs:CreateLogStream"
+              - "logs:CreateLogGroup"
+              - "logs:PutLogEvents"
+            Resource:
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:*:log-stream:*"
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:*"
+          -
+            Action:
+            - cloudwatch:*
+            - sns:*
+            Resource: "*"
+            Effect: Allow
+          -
+            Action:
+            - lambda:InvokeFunction
+            - lambda:ListFunctions
+            Resource: "*"
+            Effect: Allow
+          -
+            Effect: Allow
+            Action:
+            - states:DescribeExecution
+            - states:DescribeStateMachine
+            - states:StartExecution
+            Resource: "*"
+
+  StaticPipelinePolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: !Sub "${ProjectSlug}-StaticPipelinePolicy"
+      Roles:
+        - Fn::ImportValue:
+            !Sub "root-${ProjectSlug}StaticPipelineRole"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:GetObjectVersion
+            Resource:
+              - !Sub
+                - "${artifactbucketarn}/${ProjectSlug}/StaticBuild/*"
+                -
+                  artifactbucketarn:
+                    Fn::ImportValue: "root-ArtifactBucketArn"
+          -
+            Effect: Allow
+            Action:
+              - s3:ListBucketVersions
+              - s3:ListBucket
+              - s3:GetBucketVersioning
+            Resource:
+              -
+                Fn::ImportValue: "root-ArtifactBucketArn"
+          -
+            Action:
+              - "s3:GetObject"
+              - "s3:PutObject"
+              - "s3:DeleteObject"
+            Effect: "Allow"
+            Resource:
+              - !Sub
+                - "${staticwebsitebucketarn}/${ProjectSlug}/stage/*"
+                -
+                  staticwebsitebucketarn:
+                    Fn::ImportValue: "root-StaticWebsiteBucketArn"
+              - !Sub
+                - "${staticwebsitebucketarn}/${ProjectSlug}/production/*"
+                -
+                  staticwebsitebucketarn:
+                    Fn::ImportValue: "root-StaticWebsiteBucketArn"
+
+

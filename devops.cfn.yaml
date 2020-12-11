@@ -738,7 +738,7 @@ Resources:
           Fn::ImportValue: "root-PipelineBucket"
       Name: !Ref ProjectSlug
       RoleArn:
-        Fn::ImportValue: "root-StaticPipelineRoleArn"
+        Fn::ImportValue: "root-weboftomorrowStaticPipelineRoleArn"
       Stages:
         -
           Name: Source
