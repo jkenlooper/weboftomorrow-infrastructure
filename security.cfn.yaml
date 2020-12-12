@@ -81,7 +81,7 @@ Resources:
   StaticPipelinePolicy:
     Type: "AWS::IAM::Policy"
     Properties:
-      PolicyName: !Sub "${ProjectSlug}-StaticPipelinePolicy"
+      PolicyName: "StaticPipelinePolicy"
       Roles:
         - Fn::ImportValue:
             !Sub "root-${ProjectSlug}StaticPipelineRole"
@@ -125,5 +125,4 @@ Resources:
                 -
                   staticwebsitebucketarn:
                     Fn::ImportValue: "root-StaticWebsiteBucketArn"
-
 

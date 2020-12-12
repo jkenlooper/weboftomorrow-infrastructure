@@ -33,6 +33,86 @@ Parameters:
 
 Resources:
 
+  BuildChangeSetPolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: "BuildChangeSetPolicy"
+      Roles:
+        - Fn::ImportValue:
+            !Sub "root-${ProjectSlug}BuildChangeSetRole"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: Allow
+            Action:
+              - "cloudformation:DescribeStackInstance"
+              - "cloudformation:CreateChangeSet"
+              - "cloudformation:DescribeChangeSet"
+              - "cloudformation:DescribeStacks"
+            Resource:
+              - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ProjectSlug}/*"
+              - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stackset/${ProjectSlug}:*"
+              - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ProjectSlug}-*/*"
+              - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stackset/${ProjectSlug}-*:*"
+              - !Sub "arn:aws:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31"
+          -
+            Effect: Allow
+            Action:
+              - "s3:GetObject"
+              - "s3:GetObjectVersion"
+              - "s3:ListBucket"
+            Resource:
+              - !Sub
+                - "${artifactbucketarn}/cloudformation/source-templates/${ProjectSlug}/*"
+                -
+                  artifactbucketarn:
+                    Fn::ImportValue: "root-ArtifactBucketArn"
+          -
+            Effect: Allow
+            Action:
+              - "s3:ListBucket"
+            Resource:
+              -
+                Fn::ImportValue: "root-ArtifactBucketArn"
+          -
+            Effect: Allow
+            Action:
+              - "s3:PutObject"
+              - "s3:GetObject"
+            Resource:
+              - !Sub
+                - "${artifactbucketarn}/cloudformation/package-templates/${ProjectSlug}/*"
+                -
+                  artifactbucketarn:
+                    Fn::ImportValue: "root-ArtifactBucketArn"
+              - !Sub
+                - "${artifactbucketarn}/cloudformation/checksums/${ProjectSlug}/*"
+                -
+                  artifactbucketarn:
+                    Fn::ImportValue: "root-ArtifactBucketArn"
+          -
+            Effect: Allow
+            Action:
+              - "logs:CreateLogStream"
+              - "logs:CreateLogGroup"
+              - "logs:PutLogEvents"
+            Resource:
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-BuildChangeSet:log-stream:*"
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-BuildChangeSet"
+          -
+            Effect: "Allow"
+            Resource:
+              - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectSlug}/*"
+            Action:
+              - "ssm:GetParameters"
+          #-
+          #  Effect: "Allow"
+          #  Resource:
+          #    - !GetAtt CloudFormationRole.Arn
+          #  Action:
+          #    - "iam:PassRole"
+
   BuildChangeSet:
     Type: 'AWS::CodeBuild::Project'
     Properties:
