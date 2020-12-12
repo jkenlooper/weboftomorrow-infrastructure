@@ -156,16 +156,13 @@ Resources:
                 HeaderValue: !Ref SecretHeaderString
             OriginPath: !Sub "/${ProjectSlug}/production/${GreenVersion}"
 
-  #TODO: Create a hosted zone resource?
-
-  #TODO: move InvalidationPolicy to root stack?
   InvalidationPolicy:
     Type: "AWS::IAM::Policy"
     Properties:
       PolicyName: !Sub "${ProjectSlug}-InvalidationPolicy"
       Roles:
         - Fn::ImportValue:
-            "root-weboftomorrowS3UpdateWebsiteProductionRoleName"
+            "root-weboftomorrowS3UpdateWebsiteProductionRole"
       PolicyDocument:
         Version: "2012-10-17"
         Statement:

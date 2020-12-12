@@ -126,3 +126,134 @@ Resources:
                   staticwebsitebucketarn:
                     Fn::ImportValue: "root-StaticWebsiteBucketArn"
 
+  S3UpdateWebsiteProductionPolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: "S3UpdateWebsiteProductionPolicy"
+      Roles:
+        - Fn::ImportValue:
+            !Sub "root-${ProjectSlug}S3UpdateWebsiteProductionRole"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: Allow
+            Action:
+              - "s3:PutObject"
+              - "s3:GetObject"
+              - "s3:DeleteObject"
+              - "s3:ListObjectsV2"
+            Resource:
+              - !Sub
+                - "${staticwebsitebucketarn}/${ProjectSlug}/production/*"
+                -
+                  staticwebsitebucketarn:
+                    Fn::ImportValue: "root-StaticWebsiteBucketArn"
+          -
+            Effect: Allow
+            Action:
+              - "s3:ListBucket"
+              - "s3:GetBucketLocation"
+            Resource:
+              -
+                Fn::ImportValue: "root-StaticWebsiteBucketArn"
+          -
+            Effect: Allow
+            Action:
+              - "logs:CreateLogStream"
+              - "logs:CreateLogGroup"
+              - "logs:PutLogEvents"
+            Resource:
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-SyncGreenToBlue:log-stream:*"
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-SyncGreenToBlue"
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-DeployGreenVersion:log-stream:*"
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-DeployGreenVersion"
+
+  S3CleanupLambdaWebsiteProductionPolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: "S3CleanupLambdaWebsiteProductionPolicy"
+      Roles:
+        - Fn::ImportValue:
+            !Sub "root-${ProjectSlug}S3UpdateWebsiteProductionRole"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: Allow
+            Action:
+              - "logs:CreateLogStream"
+              - "logs:CreateLogGroup"
+              - "logs:PutLogEvents"
+            Resource:
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:*"
+          -
+            Action:
+              - "codepipeline:PutJobSuccessResult"
+              - "codepipeline:PutJobFailureResult"
+            Effect: "Allow"
+            Resource: "*"
+
+  StaticBuildPolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: "StaticBuildPolicy"
+      Roles:
+        - Fn::ImportValue:
+            !Sub "root-${ProjectSlug}StaticBuildRole"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Resource:
+              - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectSlug}/*"
+            Action:
+              - "ssm:GetParameters"
+          -
+            Effect: Allow
+            Action:
+              - "s3:PutObject"
+            Resource:
+              - !Sub
+                - "${artifactbucketbucketarn}/${ProjectSlug}/StaticBuild/*"
+                -
+                  artifactbucketbucketarn:
+                    Fn::ImportValue: "root-ArtifactBucketArn"
+          -
+            Effect: Allow
+            Action:
+              - "logs:CreateLogStream"
+              - "logs:CreateLogGroup"
+              - "logs:PutLogEvents"
+            Resource:
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-StaticBuild:log-stream:*"
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-StaticBuild"
+
+  StaticTestPolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: "StaticTestPolicy"
+      Roles:
+        - Fn::ImportValue:
+            !Sub "root-${ProjectSlug}StaticTestRole"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Resource:
+              - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectSlug}/*"
+            Action:
+              - "ssm:GetParameters"
+          -
+            Effect: Allow
+            Action:
+              - "logs:CreateLogStream"
+              - "logs:CreateLogGroup"
+              - "logs:PutLogEvents"
+            Resource:
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-StaticTest:log-stream:*"
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-StaticTest"
+
+
