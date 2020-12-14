@@ -1,6 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
 
-
 Description: >
   A static site backed by CloudFront CDN. Uses a blue-green deployment via two
   origins in an origin group. The origins can be swapped when needing to revert
@@ -59,8 +58,8 @@ Resources:
           AcmCertificateArn: !Ref CertificateArn
           MinimumProtocolVersion: "TLSv1.2_2019"
           SslSupportMethod: sni-only
-        Comment: >
-          weboftomorrow production blue-green
+        Comment: !Sub >
+          ${ProjectSlug} production blue-green
         DefaultCacheBehavior:
           Compress: true
           TargetOriginId: "blue-green-failover"
@@ -162,7 +161,7 @@ Resources:
       PolicyName: !Sub "${ProjectSlug}-InvalidationPolicy"
       Roles:
         - Fn::ImportValue:
-            "root-weboftomorrowS3UpdateWebsiteProductionRole"
+            !Sub "root-${ProjectSlug}S3UpdateWebsiteProductionRole"
       PolicyDocument:
         Version: "2012-10-17"
         Statement:

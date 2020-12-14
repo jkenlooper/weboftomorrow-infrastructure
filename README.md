@@ -5,6 +5,7 @@ the following CloudFormation templates.
 
 - `build-change-set.cfn.yaml`
 - `weboftomorrow.cfn.yaml`
+- `security.cfn.yaml`
 - `devops.cfn.yaml`
 
 _It currently depends on another stack that creates many of the root resources._

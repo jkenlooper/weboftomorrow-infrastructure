@@ -10,5 +10,4 @@
 /pyvenv.cfg
 /share/
 
-/static.template.package.yml
 /.env

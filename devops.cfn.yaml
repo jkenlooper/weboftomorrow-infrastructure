@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: "AWS::Serverless-2016-10-31"
 
 Description: >
-  Support CI/CD for weboftomorrow.
+  Support CI/CD for a static website.
 
 Metadata:
   Author: Jake Hickenlooper
@@ -158,7 +158,8 @@ Resources:
             Value: !Ref GitBranchToBuildFrom
       QueuedTimeoutInMinutes: 10
       ServiceRole:
-        Fn::ImportValue: root-weboftomorrowStaticBuildRoleArn
+        Fn::ImportValue:
+          !Sub "root-${ProjectSlug}StaticBuildRoleArn"
       Source:
         Auth:
           Type: OAUTH
@@ -188,7 +189,8 @@ Resources:
         Directly patch the S3 production files and invalidate any CloudFront
         cache for files that have changed.
       ServiceRole:
-        Fn::ImportValue: "root-weboftomorrowS3UpdateWebsiteProductionRoleArn"
+        Fn::ImportValue:
+          !Sub "root-${ProjectSlug}S3UpdateWebsiteProductionRoleArn"
       Environment:
         ComputeType: BUILD_GENERAL1_SMALL
         Image: "aws/codebuild/standard:4.0"
@@ -408,7 +410,8 @@ Resources:
     Properties:
       Name: !Sub "${ProjectSlug}-StaticTest"
       ServiceRole:
-        Fn::ImportValue: "root-weboftomorrowStaticTestRoleArn"
+        Fn::ImportValue:
+          !Sub "root-${ProjectSlug}StaticTestRoleArn"
       Environment:
         ComputeType: BUILD_GENERAL1_SMALL
         Image: "aws/codebuild/standard:4.0"
@@ -440,7 +443,8 @@ Resources:
     Properties:
       Name: !Sub "${ProjectSlug}-SyncGreenToBlue"
       ServiceRole:
-        Fn::ImportValue: "root-weboftomorrowS3UpdateWebsiteProductionRoleArn"
+        Fn::ImportValue:
+          !Sub "root-${ProjectSlug}S3UpdateWebsiteProductionRoleArn"
       Environment:
         ComputeType: BUILD_GENERAL1_SMALL
         Image: "aws/codebuild/standard:4.0"
@@ -502,7 +506,8 @@ Resources:
     Properties:
       Name: !Sub "${ProjectSlug}-DeployGreenVersion"
       ServiceRole:
-        Fn::ImportValue: "root-weboftomorrowS3UpdateWebsiteProductionRoleArn"
+        Fn::ImportValue:
+          !Sub "root-${ProjectSlug}S3UpdateWebsiteProductionRoleArn"
       Environment:
         ComputeType: BUILD_GENERAL1_SMALL
         Image: "aws/codebuild/standard:4.0"
@@ -738,7 +743,8 @@ Resources:
           Fn::ImportValue: "root-PipelineBucket"
       Name: !Ref ProjectSlug
       RoleArn:
-        Fn::ImportValue: "root-weboftomorrowStaticPipelineRoleArn"
+        Fn::ImportValue:
+          !Sub "root-${ProjectSlug}StaticPipelineRoleArn"
       Stages:
         -
           Name: Source
@@ -909,8 +915,8 @@ Resources:
     Type: 'AWS::CloudFront::Distribution'
     Properties:
       DistributionConfig:
-        Comment: >
-          weboftomorrow staging green only
+        Comment: !Sub >
+          ${ProjectSlug} staging green only
         DefaultCacheBehavior:
           Compress: true
           TargetOriginId: "yellow"
@@ -946,7 +952,8 @@ Resources:
       Runtime: python3.8
       CodeUri: cleanup/.
       Role:
-        Fn::ImportValue: "root-weboftomorrowS3UpdateWebsiteProductionRoleArn"
+        Fn::ImportValue:
+          !Sub "root-${ProjectSlug}S3UpdateWebsiteProductionRoleArn"
       Timeout: 5
       Environment:
         Variables:

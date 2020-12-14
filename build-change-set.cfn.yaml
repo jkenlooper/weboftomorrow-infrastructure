@@ -146,14 +146,16 @@ Resources:
             Name: ROLE_ARN
             Type: PLAINTEXT
             Value:
-              Fn::ImportValue: "root-weboftomorrowCloudFormationRoleArn"
+              Fn::ImportValue:
+                !Sub "root-${ProjectSlug}CloudFormationRoleArn"
           -
             Name: CERTIFICATE_ARN
             Type: PLAINTEXT
             Value: !Ref CertificateArn
       QueuedTimeoutInMinutes: 10
       ServiceRole:
-        Fn::ImportValue: root-weboftomorrowBuildChangeSetRoleArn
+        Fn::ImportValue:
+          !Sub "root-${ProjectSlug}BuildChangeSetRoleArn"
       TimeoutInMinutes: 10
       Source:
         Location: !Sub
