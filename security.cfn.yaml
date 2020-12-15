@@ -160,10 +160,22 @@ Resources:
           -
             Effect: Allow
             Action:
+              - "s3:PutObject"
+            Resource:
+              - !Sub
+                - "${artifactbucketbucketarn}/${ProjectSlug}/StaticBuild/*"
+                -
+                  artifactbucketbucketarn:
+                    Fn::ImportValue: "root-ArtifactBucketArn"
+          -
+            Effect: Allow
+            Action:
               - "logs:CreateLogStream"
               - "logs:CreateLogGroup"
               - "logs:PutLogEvents"
             Resource:
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-StaticPatch:log-stream:*"
+              - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-StaticPatch"
               - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-SyncGreenToBlue:log-stream:*"
               - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-SyncGreenToBlue"
               - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:${ProjectSlug}-DeployGreenVersion:log-stream:*"
