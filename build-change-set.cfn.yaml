@@ -33,13 +33,27 @@ Parameters:
 
 Resources:
 
+  BuildChangeSetServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+
   BuildChangeSetPolicy:
     Type: "AWS::IAM::Policy"
     Properties:
       PolicyName: "BuildChangeSetPolicy"
       Roles:
-        - Fn::ImportValue:
-            !Sub "root-${ProjectSlug}BuildChangeSetRole"
+        - !Ref BuildChangeSetServiceRole
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -113,6 +127,57 @@ Resources:
           #  Action:
           #    - "iam:PassRole"
 
+  # TODO: set a role to use when creating a stack?
+  #CloudFormationRole:
+  #  Type: "AWS::IAM::Role"
+  #  Properties:
+  #    AssumeRolePolicyDocument:
+  #      Version: '2012-10-17'
+  #      Statement:
+  #        -
+  #          Effect: Allow
+  #          Principal:
+  #            Service:
+  #              - cloudformation.amazonaws.com
+  #          Action:
+  #            - "sts:AssumeRole"
+  #    Policies:
+  #      -
+  #        PolicyName: "weboftomorrowResources"
+  #        PolicyDocument:
+  #          Version: "2012-10-17"
+  #          Statement:
+  #            -
+  #              Effect: "Allow"
+  #              Resource:
+  #                - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/weboftomorrow/*"
+  #              Action:
+  #                - "ssm:GetParameters"
+  #            -
+  #              Effect: Allow
+  #              Action:
+  #                - "s3:PutObject"
+  #                - "s3:GetObject"
+  #              Resource:
+  #                - !Sub "arn:aws:s3:::${ArtifactBucket}/weboftomorrow/*"
+  #                - !Sub "arn:aws:s3:::${StaticWebsiteBucket}/weboftomorrow/*"
+  #            -
+  #              Effect: Allow
+  #              Action:
+  #                - "s3:ListBucket"
+  #              Resource:
+  #                - !GetAtt ArtifactBucket.Arn
+  #                - !GetAtt StaticWebsiteBucket.Arn
+  #            -
+  #              Effect: Allow
+  #              Action:
+  #                - "logs:CreateLogStream"
+  #                - "logs:CreateLogGroup"
+  #                - "logs:PutLogEvents"
+  #              Resource:
+  #                - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:weboftomorrow*:log-stream:*"
+  #                - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:weboftomorrow*"
+
   BuildChangeSet:
     Type: 'AWS::CodeBuild::Project'
     Properties:
@@ -142,20 +207,16 @@ Resources:
             Name: REGION
             Type: PLAINTEXT
             Value: !Ref "AWS::Region"
-          -
-            Name: ROLE_ARN
-            Type: PLAINTEXT
-            Value:
-              Fn::ImportValue:
-                !Sub "root-${ProjectSlug}CloudFormationRoleArn"
+          #-
+          #  Name: ROLE_ARN
+          #  Type: PLAINTEXT
+          #  Value: !GetAtt "CloudFormationRole.Arn"
           -
             Name: CERTIFICATE_ARN
             Type: PLAINTEXT
             Value: !Ref CertificateArn
       QueuedTimeoutInMinutes: 10
-      ServiceRole:
-        Fn::ImportValue:
-          !Sub "root-${ProjectSlug}BuildChangeSetRoleArn"
+      ServiceRole: !GetAtt "BuildChangeSetServiceRole.Arn"
       TimeoutInMinutes: 10
       Source:
         Location: !Sub

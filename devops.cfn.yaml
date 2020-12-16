@@ -81,7 +81,7 @@ Parameters:
       - "WARNING"
 
 Resources:
-  #TODO: move AmazonCloudWatchEventRole to root stack?
+
   AmazonCloudWatchEventRole:
     Type: AWS::IAM::Role
     Properties:
@@ -159,7 +159,7 @@ Resources:
       QueuedTimeoutInMinutes: 10
       ServiceRole:
         Fn::ImportValue:
-          !Sub "root-${ProjectSlug}StaticBuildRoleArn"
+          !Sub "${ProjectSlug}-StaticBuildServiceRoleArn"
       Source:
         Auth:
           Type: OAUTH
@@ -190,7 +190,7 @@ Resources:
         cache for files that have changed.
       ServiceRole:
         Fn::ImportValue:
-          !Sub "root-${ProjectSlug}S3UpdateWebsiteProductionRoleArn"
+          !Sub "${ProjectSlug}-UpdateStaticWebsiteServiceRoleArn"
       Environment:
         ComputeType: BUILD_GENERAL1_SMALL
         Image: "aws/codebuild/standard:4.0"
@@ -411,7 +411,7 @@ Resources:
       Name: !Sub "${ProjectSlug}-StaticTest"
       ServiceRole:
         Fn::ImportValue:
-          !Sub "root-${ProjectSlug}StaticTestRoleArn"
+          !Sub "${ProjectSlug}-StaticTestServiceRoleArn"
       Environment:
         ComputeType: BUILD_GENERAL1_SMALL
         Image: "aws/codebuild/standard:4.0"
@@ -444,7 +444,7 @@ Resources:
       Name: !Sub "${ProjectSlug}-SyncGreenToBlue"
       ServiceRole:
         Fn::ImportValue:
-          !Sub "root-${ProjectSlug}S3UpdateWebsiteProductionRoleArn"
+          !Sub "${ProjectSlug}-UpdateStaticWebsiteServiceRoleArn"
       Environment:
         ComputeType: BUILD_GENERAL1_SMALL
         Image: "aws/codebuild/standard:4.0"
@@ -507,7 +507,7 @@ Resources:
       Name: !Sub "${ProjectSlug}-DeployGreenVersion"
       ServiceRole:
         Fn::ImportValue:
-          !Sub "root-${ProjectSlug}S3UpdateWebsiteProductionRoleArn"
+          !Sub "${ProjectSlug}-UpdateStaticWebsiteServiceRoleArn"
       Environment:
         ComputeType: BUILD_GENERAL1_SMALL
         Image: "aws/codebuild/standard:4.0"
@@ -744,7 +744,7 @@ Resources:
       Name: !Ref ProjectSlug
       RoleArn:
         Fn::ImportValue:
-          !Sub "root-${ProjectSlug}StaticPipelineRoleArn"
+          !Sub "${ProjectSlug}-StaticPipelineServiceRole"
       Stages:
         -
           Name: Source
@@ -953,7 +953,7 @@ Resources:
       CodeUri: cleanup/.
       Role:
         Fn::ImportValue:
-          !Sub "root-${ProjectSlug}S3UpdateWebsiteProductionRoleArn"
+          !Sub "${ProjectSlug}-UpdateStaticWebsiteServiceRoleArn"
       Timeout: 5
       Environment:
         Variables:

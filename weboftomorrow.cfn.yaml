@@ -158,10 +158,10 @@ Resources:
   InvalidationPolicy:
     Type: "AWS::IAM::Policy"
     Properties:
-      PolicyName: !Sub "${ProjectSlug}-InvalidationPolicy"
+      PolicyName: "InvalidationPolicy"
       Roles:
         - Fn::ImportValue:
-            !Sub "root-${ProjectSlug}S3UpdateWebsiteProductionRole"
+            !Sub "${ProjectSlug}-UpdateStaticWebsiteServiceRole"
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
