@@ -76,6 +76,16 @@ Resources:
                   artifactbucketbucketarn:
                     Fn::ImportValue: "root-ArtifactBucketArn"
           -
+            Effect: Allow
+            Action:
+              - "s3:GetObject"
+            Resource:
+              - !Sub
+                - "${pipelinebucketarn}/*"
+                -
+                  pipelinebucketarn:
+                    Fn::ImportValue: "root-PipelineBucketArn"
+          -
             Action:
               - "codepipeline:PutJobSuccessResult"
               - "codepipeline:PutJobFailureResult"
@@ -298,6 +308,16 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
+          -
+            Effect: Allow
+            Action:
+              - "s3:GetObject"
+            Resource:
+              - !Sub
+                - "${pipelinebucketarn}/*"
+                -
+                  pipelinebucketarn:
+                    Fn::ImportValue: "root-PipelineBucketArn"
           -
             Effect: Allow
             Action:

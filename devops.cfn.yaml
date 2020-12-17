@@ -126,7 +126,7 @@ Resources:
               -
                 Fn::ImportValue: "root-ArtifactBucket"
             key:
-              - !Sub "${ProjectSlug}/StaticBuild/static.zip"
+              - !Sub "staticbuild/${ProjectSlug}/static.zip"
       Targets:
         -
           Arn: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${StaticPipeline}"
@@ -258,7 +258,7 @@ Resources:
                 - aws --version
                 - |
                     aws s3 cp \
-                      s3://${ARTIFACT_BUCKET}/${PROJECT_SLUG}/StaticBuild/parameters.json \
+                      s3://${ARTIFACT_BUCKET}/staticbuild/${PROJECT_SLUG}/parameters.json \
                       parameters.json
                 - BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' parameters.json)
                 - GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' parameters.json)
@@ -280,7 +280,7 @@ Resources:
                 # Get the patch file.
                 - |
                     aws s3 cp \
-                      s3://${ARTIFACT_BUCKET}/${PROJECT_SLUG}/StaticBuild/static.patch \
+                      s3://${ARTIFACT_BUCKET}/staticbuild/${PROJECT_SLUG}/static.patch \
                       static.patch \
                       --no-progress
                 # Apply the patch locally to the new directory, create the
@@ -759,7 +759,7 @@ Resources:
                 S3Bucket:
                   Fn::ImportValue: "root-ArtifactBucket"
                 # static.zip here is the GreenVersion
-                S3ObjectKey: !Sub "${ProjectSlug}/StaticBuild/static.zip"
+                S3ObjectKey: !Sub "staticbuild/${ProjectSlug}/static.zip"
                 PollForSourceChanges: false
               Name: "StaticBuild-artifact"
               OutputArtifacts:
@@ -774,7 +774,7 @@ Resources:
               Configuration:
                 S3Bucket:
                   Fn::ImportValue: "root-ArtifactBucket"
-                S3ObjectKey: !Sub "${ProjectSlug}/StaticBuild/source.zip"
+                S3ObjectKey: !Sub "staticbuild/${ProjectSlug}/source.zip"
                 PollForSourceChanges: false
               Name: "StaticBuild-artifact-source"
               OutputArtifacts:
@@ -789,7 +789,7 @@ Resources:
               Configuration:
                 S3Bucket:
                   Fn::ImportValue: "root-ArtifactBucket"
-                S3ObjectKey: !Sub "${ProjectSlug}/StaticBuild/parameters.json"
+                S3ObjectKey: !Sub "staticbuild/${ProjectSlug}/parameters.json"
                 PollForSourceChanges: false
               Name: "StaticBuild-artifact-parameters"
               OutputArtifacts:
