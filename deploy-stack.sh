@@ -35,6 +35,36 @@ for item in $CF_TEMPLATES; do
 done
 aws --profile $AWSCONFIG_PROFILE s3 cp cleanup "s3://${ARTIFACT_BUCKET}/cloudformation/source-templates/${STACK_NAME}/cleanup/" --recursive
 
+# TODO: only do this if the snippet isn't there.
+# Create the snippet for the static website bucket policy.
+SECRET_HEADER_STRING=$(aws --profile $AWSCONFIG_PROFILE \
+  --output text \
+  --query 'Parameter.Value' \
+  ssm get-parameter --name "/${STACK_NAME}/secret-header-string")
+TMP_DIR=$(mktemp -d)
+cat << HERE > $TMP_DIR/resources.txt
+arn:aws:s3:::$ARTIFACT_BUCKET/${STACK_NAME}/stage
+arn:aws:s3:::$ARTIFACT_BUCKET/${STACK_NAME}/stage/*
+arn:aws:s3:::$ARTIFACT_BUCKET/${STACK_NAME}/production
+arn:aws:s3:::$ARTIFACT_BUCKET/${STACK_NAME}/production/*
+HERE
+jq --raw-input --null-input --raw-output \
+  --arg stack_name $STACK_NAME \
+  --arg secret_header_string "${SECRET_HEADER_STRING}" \
+  '[inputs] | {
+    Action: "s3:GetObject",
+    Effect: "Allow",
+    Principal: "*",
+    Resource: .,
+    Condition: {
+      StringLike: {
+        "aws:referer": $secret_header_string
+      }
+    }
+  }' $TMP_DIR/resources.txt > $TMP_DIR/static-website-bucket-policy-statement.cfn.json
+aws --profile $AWSCONFIG_PROFILE s3 cp $TMP_DIR/static-website-bucket-policy-statement.cfn.json "s3://${ARTIFACT_BUCKET}/cloudformation/source-templates/${STACK_NAME}/cfn-snippets/static-website-bucket-policy-statement.cfn.json"
+rm -rf $TMP_DIR
+
 # Assuming that the artifact bucket is in the same region.
 for item in $CF_TEMPLATES; do
 echo "https://${ARTIFACT_BUCKET}.s3-${REGION}.amazonaws.com/cloudformation/source-templates/${STACK_NAME}/$item"
