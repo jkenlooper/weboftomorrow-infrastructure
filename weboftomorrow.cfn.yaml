@@ -24,9 +24,9 @@ Parameters:
 
   SecretHeaderString:
     Type: "AWS::SSM::Parameter::Value<String>"
-    Default: "/weboftomorrow/secret-header-string"
+    Default: "/shared/secret-header-string"
     AllowedValues:
-      - "/weboftomorrow/secret-header-string"
+      - "/shared/secret-header-string"
 
   HostedZoneId:
     Type: 'AWS::Route53::HostedZone::Id'

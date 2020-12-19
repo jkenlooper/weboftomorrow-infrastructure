@@ -118,7 +118,9 @@ Resources:
             Effect: "Allow"
             Resource:
               - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectSlug}/*"
+              - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/shared/secret-header-string"
             Action:
+              - "ssm:GetParameter"
               - "ssm:GetParameters"
           #-
           #  Effect: "Allow"

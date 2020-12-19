@@ -35,9 +35,9 @@ Parameters:
 
   SecretHeaderString:
     Type: "AWS::SSM::Parameter::Value<String>"
-    Default: "/weboftomorrow/secret-header-string"
+    Default: "/shared/secret-header-string"
     AllowedValues:
-      - "/weboftomorrow/secret-header-string"
+      - "/shared/secret-header-string"
     Description: >
       Secret string in the Referer header that CloudFront will use when
       accessing files from the S3 bucket. This blocks direct public access of

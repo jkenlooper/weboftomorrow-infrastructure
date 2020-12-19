@@ -260,6 +260,7 @@ Resources:
               - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectSlug}/example_public_key"
               - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectSlug}/example_secret_key"
             Action:
+              - "ssm:GetParameter"
               - "ssm:GetParameters"
           -
             Effect: Allow
