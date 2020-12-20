@@ -1,0 +1,11 @@
+default_context:
+  project_name: "Web of Tomorrow Infrastructure"
+  repo_name: "weboftomorrow-infrastructure"
+  project_slug: "weboftomorrow"
+  site_domain: "www.weboftomorrow.com"
+  full_name: "Jake Hickenlooper"
+  email: "jake@weboftomorrow.com"
+  project_short_description: "Minimal infrastructure for a static website"
+  version: "0.1.0"
+  now: "2020-12-20"
+  generated_by_cookiecutter_website_infrastructure_version: "0.1.0"
