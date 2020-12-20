@@ -65,10 +65,14 @@ Resources:
             Resource:
               -
                 Fn::ImportValue: "root-StaticWebsiteBucketArn"
+              -
+                Fn::ImportValue: "root-ArtifactBucketArn"
           -
             Effect: Allow
             Action:
               - "s3:PutObject"
+              - "s3:GetObject"
+              - "s3:ListObjectsV2"
             Resource:
               - !Sub
                 - "${artifactbucketbucketarn}/staticbuild/${ProjectSlug}/*"

@@ -244,8 +244,14 @@ Resources:
           GroupName: !Sub "${ProjectSlug}-StaticPatch"
           Status: ENABLED
       QueuedTimeoutInMinutes: 10
+      TimeoutInMinutes: 10
       Source:
-        Type: NO_SOURCE
+        Type: S3
+        Location: !Sub
+          - "${artifactBucket}/staticbuild/${ProjectSlug}/"
+          -
+            artifactBucket:
+              Fn::ImportValue: "root-ArtifactBucket"
         BuildSpec: |
           version: 0.2
           env:
@@ -256,10 +262,6 @@ Resources:
             build:
               commands:
                 - aws --version
-                - |
-                    aws s3 cp \
-                      s3://${ARTIFACT_BUCKET}/staticbuild/${PROJECT_SLUG}/parameters.json \
-                      parameters.json
                 - BLUE_VERSION=$(jq -r '.[] | select(.ParameterKey == "BlueVersion") | .ParameterValue' parameters.json)
                 - GREEN_VERSION=$(jq -r '.[] | select(.ParameterKey == "GreenVersion") | .ParameterValue' parameters.json)
                 - |
@@ -267,7 +269,7 @@ Resources:
                       s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/${GREEN_VERSION}/ \
                       current \
                       --recursive \
-                      --no-progress
+                      --no-progress || mkdir -p current
                 - cp -r current new
                 - |
                     (
@@ -277,12 +279,6 @@ Resources:
                       # index.html, notfound.html, error.html, and maintenance.html files.
                       find ./* -maxdepth 0 ! -path ./media ! -path ./theme | xargs -I {} find {} -type f ! -name notfound.html ! -name error.html ! -name maintenance.html ! -name index.html | xargs md5sum > ../current_checksums
                     )
-                # Get the patch file.
-                - |
-                    aws s3 cp \
-                      s3://${ARTIFACT_BUCKET}/staticbuild/${PROJECT_SLUG}/static.patch \
-                      static.patch \
-                      --no-progress
                 # Apply the patch locally to the new directory, create the
                 # changed-files.txt by doing a md5sum check.
                 - |
@@ -403,7 +399,6 @@ Resources:
                   aws s3 cp \
                     NG \
                     s3://${STATIC_SITE_FILES_BUCKET}/${PROJECT_SLUG}/production/GREEN_VERSION
-      TimeoutInMinutes: 10
 
   StaticTest:
     Type: 'AWS::CodeBuild::Project'

@@ -28,3 +28,5 @@ Types of changes
 ## [0.1.0] - 2020-12-05
 
 Initial working setup.
+Start of the project. Generated source files from
+[cookiecutter-website-infrastructure version 0.1.0](https://github.com/jkenlooper/cookiecutter-website-infrastructure).
