@@ -136,12 +136,13 @@ Resources:
   StaticBuild:
     Type: 'AWS::CodeBuild::Project'
     Properties:
-      Name: "StaticBuild"
+      Name: !Sub "${ProjectSlug}-StaticBuild"
       Artifacts:
         Type: S3
+        Name: !Ref ProjectSlug
         Location:
           Fn::ImportValue: "root-ArtifactBucket"
-        Path: !Ref ProjectSlug
+        Path: "staticbuild"
       LogsConfig:
         CloudWatchLogs:
           GroupName: !Sub "${ProjectSlug}-StaticBuild"
